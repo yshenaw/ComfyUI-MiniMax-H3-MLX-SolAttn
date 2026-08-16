@@ -1,0 +1,106 @@
+{
+  "id": "7d40c7bc-0ab5-4e56-bb28-3471ee2228c6",
+  "revision": 0,
+  "last_node_id": 5,
+  "last_link_id": 4,
+  "nodes": [
+    {
+      "id": 1,
+      "type": "MiniMaxH3MLXTurbo",
+      "pos": [-720, 20],
+      "size": [540, 490],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {"name": "images", "type": "IMAGE", "links": [1]},
+        {"name": "audio", "type": "AUDIO", "links": [2, 4]},
+        {"name": "stats", "type": "STRING", "links": null}
+      ],
+      "properties": {"Node name for S&R": "MiniMaxH3MLXTurbo"},
+      "widgets_values": [
+        "A cinematic tracking shot of a red sports car driving through a neon-lit city in the rain. Reflections flow across the wet street while the camera follows smoothly. Audio: tires on wet pavement, restrained engine sound, distant city ambience, no speech.",
+        "4-bit",
+        "Turbo 4 Fast",
+        "auto",
+        "prequantized 8-bit",
+        "sol_attn",
+        864,
+        480,
+        5.0,
+        42,
+        1.3
+      ]
+    },
+    {
+      "id": 2,
+      "type": "CreateVideo",
+      "pos": [-60, 70],
+      "size": [300, 120],
+      "flags": {},
+      "order": 1,
+      "mode": 0,
+      "inputs": [
+        {"name": "images", "type": "IMAGE", "link": 1},
+        {"name": "audio", "shape": 7, "type": "AUDIO", "link": 2}
+      ],
+      "outputs": [{"name": "VIDEO", "type": "VIDEO", "links": [3]}],
+      "properties": {"Node name for S&R": "CreateVideo"},
+      "widgets_values": [24, 8]
+    },
+    {
+      "id": 3,
+      "type": "SaveVideo",
+      "pos": [340, 20],
+      "size": [600, 400],
+      "flags": {},
+      "order": 2,
+      "mode": 0,
+      "inputs": [{"name": "video", "type": "VIDEO", "link": 3}],
+      "outputs": [{"name": "video", "type": "VIDEO", "links": null}],
+      "properties": {"Node name for S&R": "SaveVideo"},
+      "widgets_values": ["video/minimax_h3_mlx_turbo4_sol", "auto", "auto"]
+    },
+    {
+      "id": 4,
+      "type": "SaveAudio",
+      "pos": [-60, 270],
+      "size": [320, 100],
+      "flags": {},
+      "order": 3,
+      "mode": 0,
+      "inputs": [{"name": "audio", "type": "AUDIO", "link": 4}],
+      "outputs": [],
+      "properties": {"Node name for S&R": "SaveAudio"},
+      "widgets_values": ["audio/minimax_h3_mlx_turbo4_sol"]
+    },
+    {
+      "id": 5,
+      "type": "MarkdownNote",
+      "pos": [-720, 570],
+      "size": [980, 220],
+      "flags": {},
+      "order": 4,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [],
+      "title": "MiniMax H3 MLX Turbo4",
+      "properties": {},
+      "widgets_values": ["## Powered by MiniMax H3\n\nDefault for 48 GB Macs: 4-bit core + full-width 8-bit AdaLN, Qwen8 staged 25+25, tiled Metal Sol-Attn, four denoise forwards. The 8-bit profile is experimental on 48 GB and recommended for 64 GB or more. Model files are governed by the MiniMax H3 Community License."]
+    }
+  ],
+  "links": [
+    [1, 1, 0, 2, 0, "IMAGE"],
+    [2, 1, 1, 2, 1, "AUDIO"],
+    [3, 2, 0, 3, 0, "VIDEO"],
+    [4, 1, 1, 4, 0, "AUDIO"]
+  ],
+  "groups": [
+    {"id": 1, "title": "MiniMax H3 MLX", "bounding": [-760, -20, 640, 570], "color": "#28766c", "flags": {}},
+    {"id": 2, "title": "Outputs", "bounding": [-100, -20, 1080, 480], "color": "#28766c", "flags": {}}
+  ],
+  "config": {},
+  "extra": {"frontendVersion": "1.48.7", "ds": {"scale": 0.8, "offset": [740, 120]}},
+  "version": 0.4
+}

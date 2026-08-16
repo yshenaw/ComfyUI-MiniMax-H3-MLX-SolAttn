@@ -1,0 +1,9 @@
+mlx>=0.32.0
+mlx-vlm
+numpy>=1.26
+safetensors>=0.4
+huggingface_hub>=0.30
+transformers>=4.57
+
+# ComfyUI supplies an MPS-enabled torch build for the tiled Sol-Attn bridge.
+# git+https://github.com/huggingface/diffusers@minimax-h3

@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "comfyui-minimax-h3-mlx-solattn"
+version = "0.1.0"
+description = "MiniMax-H3 MLX inference with Apple Silicon Sol-Attn"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { file = "LICENSE" }
+dependencies = [
+  "mlx>=0.32.0",
+  "mlx-vlm",
+  "numpy>=1.26",
+  "safetensors>=0.4",
+  "huggingface_hub>=0.30",
+  "transformers>=4.57",
+]
+
+[project.urls]
+Repository = "https://github.com/yshenaw/ComfyUI-MiniMax-H3-MLX-SolAttn"
+
+[tool.comfy]
+PublisherId = "yshenaw"
+DisplayName = "MiniMax H3 MLX Sol-Attn"
+Icon = ""
+
+[tool.setuptools.packages.find]
+include = ["minimax_h3_mlx*"]
+namespaces = true
