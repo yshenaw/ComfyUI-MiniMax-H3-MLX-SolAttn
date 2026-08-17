@@ -53,12 +53,12 @@ class MiniMaxH3MLXGenerate:
                     list(TRANSFORMER_REPOS),
                     {
                         "default": "4-bit",
-                        "tooltip": "Use 4-bit on 48 GB Macs; 8-bit is experimental on 48 GB and recommended for 64 GB+.",
+                        "tooltip": "4/8-bit are fast resident tiers; BF16 stream2 is the 48/64 GB high-quality slow tier.",
                     },
                 ),
                 "generation_profile": (list(PRESETS), {"default": "Turbo 4 Fast"}),
                 "memory_mode": (
-                    ["auto", "resident", "stream5"],
+                    ["auto", "resident", "stream2", "stream5"],
                     {"default": "auto"},
                 ),
                 "qwen_precision": (
@@ -121,12 +121,19 @@ class MiniMaxH3MLXGenerate:
             import os
 
             physical_gb = os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES") / 1e9
-            memory_mode = "stream5" if physical_gb < 40.0 else "resident"
+            if model_profile == "bf16":
+                memory_mode = "stream2" if physical_gb < 96.0 else "resident"
+            else:
+                memory_mode = "stream5" if physical_gb < 40.0 else "resident"
         else:
-            physical_gb = 32.0 if memory_mode == "stream5" else 48.0
+            physical_gb = 32.0 if memory_mode in ("stream2", "stream5") else 48.0
         qwen_stages = 2 if physical_gb < 40.0 else 1
-        transformer = paths.streaming_transformer if memory_mode == "stream5" else paths.transformer
-        if memory_mode == "stream5" and not transformer.is_dir():
+        transformer = {
+            "resident": paths.transformer,
+            "stream2": paths.streaming_transformer_2,
+            "stream5": paths.streaming_transformer,
+        }[memory_mode]
+        if memory_mode.startswith("stream") and not transformer.is_dir():
             raise FileNotFoundError(
                 f"Streaming transformer not found: {transformer}. "
                 "Build it with scripts/build_streaming_checkpoint.py."

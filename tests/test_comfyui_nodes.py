@@ -10,7 +10,7 @@ def test_node_registers_upload_ready_defaults():
     assert required["model_profile"][1]["default"] == "4-bit"
     assert required["generation_profile"][1]["default"] == "Turbo 4 Fast"
     assert required["memory_mode"][1]["default"] == "auto"
-    assert "64 GB+" in required["model_profile"][1]["tooltip"]
+    assert "BF16 stream2" in required["model_profile"][1]["tooltip"]
     assert required["qwen_precision"][1]["default"] == "prequantized 8-bit"
     assert required["attention"][1]["default"] == "sol_attn"
     assert MiniMaxH3MLXTurbo.OUTPUT_NODE is True

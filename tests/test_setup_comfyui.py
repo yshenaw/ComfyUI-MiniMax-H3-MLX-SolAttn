@@ -31,7 +31,27 @@ def test_default_plan_downloads_shared_assets_and_4bit_only(tmp_path):
 def test_all_plan_adds_8bit_without_duplicate_shared_assets(tmp_path):
     tasks = SETUP.download_plan("all", tmp_path)
 
-    assert len(tasks) == 5
-    assert tasks[-2].local_dir.name == "4-bit"
-    assert tasks[-1].local_dir.name == "8-bit"
+    assert len(tasks) == 8
+    assert tasks[-5].local_dir.name == "4-bit"
+    assert tasks[-4].local_dir.name == "8-bit"
+    assert tasks[-3].local_dir.name == "bf16"
+    assert tasks[-2].destination.name == "minimax_h3_fl2va_pruned_bf16.safetensors"
+    assert tasks[-1].filename == "config.json"
     assert sum(task.repo_id == "MiniMaxAI/MiniMax-H3" for task in tasks) == 1
+
+
+def test_bf16_plan_selects_full_precision_transformer(tmp_path):
+    tasks = SETUP.download_plan("bf16", tmp_path)
+
+    assert tasks[-1].repo_id == "pipenetwork/MiniMax-H3-MLX-bf16"
+    assert tasks[-1].local_dir.name == "bf16"
+
+
+def test_pruned_bf16_plan_uses_comfy_weights_and_mlx_config(tmp_path):
+    tasks = SETUP.download_plan("bf16-pruned", tmp_path)
+
+    assert tasks[-2].repo_id == "Comfy-Org/MiniMax-H3"
+    assert tasks[-2].filename == "diffusion_models/minimax_h3_fl2va_pruned_bf16.safetensors"
+    assert tasks[-2].destination.name == "minimax_h3_fl2va_pruned_bf16.safetensors"
+    assert tasks[-1].repo_id == "pipenetwork/MiniMax-H3-MLX-bf16"
+    assert tasks[-1].filename == "config.json"

@@ -68,6 +68,19 @@ def _adaln_curve_shape(paths: list[Path]) -> tuple[int, int] | None:
     return None
 
 
+def _interleave_qkv_rows(key: str, tensor: mx.array, config: DiTConfig) -> mx.array:
+    """Adapt Comfy-Org H3 QKV rows from ``[Q][K][V]`` to per-head QKV order."""
+    if not key.endswith(("attn.qkv_proj.weight", "attn.qkv_proj.scales", "attn.qkv_proj.biases")):
+        return tensor
+    expected_rows = 3 * config.num_attention_heads * config.attention_head_dim
+    if tensor.shape[0] != expected_rows:
+        return tensor
+    indices = mx.arange(expected_rows).reshape(
+        3, config.num_attention_heads, config.attention_head_dim
+    ).transpose(1, 0, 2).reshape(-1)
+    return tensor[indices]
+
+
 def load_dit(
     model_dir: str | Path,
     dtype: mx.Dtype | None = None,
@@ -138,6 +151,8 @@ def load_dit(
             if key not in expected:
                 unexpected.append(key)
                 continue
+            if curve_shape is not None:
+                tensor = _interleave_qkv_rows(key, tensor, config)
             if dtype is not None:
                 # Bulk conversion of the whole 33B stack. Done on the CPU stream and materialized
                 # per tensor: casting ~130 GB through Metal is enough submissions to trip the

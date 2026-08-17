@@ -6,14 +6,16 @@ Apple Silicon ComfyUI node for MiniMax H3 synchronized video and audio generatio
 
 ## Which model should I install?
 
-The node supports both profiles, but the setup command downloads **4-bit only by default**.
+The node supports quantized fast profiles and BF16 quality profiles. Setup downloads **4-bit only by default**.
 
 | Profile | Transformer download | Resident after AdaLN drop | Use case |
 | --- | ---: | ---: | --- |
 | 4-bit core + 8-bit full AdaLN | about 25.3 GB | 11.45 GB | Recommended default; lower memory and faster linear layers |
 | 8-bit core + 8-bit full AdaLN | about 35.3 GB | 21.47 GB | Higher fidelity; 64 GB+ recommended |
+| BF16 core + rank-8 pruned AdaLN | about 40.2 GB | 40.2 GB | 48/64 GB high-quality stream2 tier |
+| BF16 core + full-width AdaLN | about 66.3 GB | 40.3 GB | 96 GB+ full-quality tier |
 
-Both profiles keep AdaLN at full width and 8-bit. Rank-8 pruned AdaLN is deliberately not offered. In a controlled full8 Turbo4 test, both floating-point pruned AdaLN and padded 8-bit pruned AdaLN collapsed to the same nearly static gray block texture and clipped audio. This isolates the failure to rank-8 pruning rather than AdaLN quantization.
+The published 4/8-bit profiles keep AdaLN full-width at 8-bit. The BF16-pruned profile uses the official rank-8 curve checkpoint. Comfy checkpoints store QKV rows as `[Q][K][V]`; the MLX repacker converts them to the per-head interleaved layout expected by this runtime. Before that conversion was added, incorrect QKV rows produced gray output that was mistakenly attributed to pruned AdaLN. Corrected BF16-pruned resident and stream2 runs both generate normal video and audio.
 
 The setup downloads a pinned six-shard subset of `lmstudio-community/Qwen3-VL-32B-Instruct-MLX-8bit`: embedding plus layers 0-49, exactly the part H3 evaluates. Cross-layer unquantized norm tensors are byte-identical to the MiniMax H3 Qwen checkpoint. The unused final 14 layers, LM head, and seventh shard are not downloaded.
 
@@ -35,7 +37,7 @@ Install this repository through ComfyUI Manager, then restart ComfyUI. For a man
 
 ```bash
 cd ComfyUI/custom_nodes
-git clone https://github.com/yifeishen/ComfyUI-MiniMax-H3-MLX-SolAttn.git
+git clone https://github.com/yshenaw/ComfyUI-MiniMax-H3-MLX-SolAttn.git
 cd ComfyUI-MiniMax-H3-MLX-SolAttn
 python3 -m pip install -r requirements.txt
 ```
@@ -53,6 +55,9 @@ Optional profiles:
 ```bash
 # Install the 8-bit transformer instead of 4-bit
 python3 scripts/setup_comfyui.py --profile 8
+
+# Install the BF16-pruned quality profile for stream2
+python3 scripts/setup_comfyui.py --profile bf16-pruned
 
 # Install both transformer profiles
 python3 scripts/setup_comfyui.py --profile all
@@ -108,8 +113,6 @@ Sol-Attn reduced denoise time by 10.45% on the M3 Ultra. With roughly 8 GB reser
 
 A 48 GB Mac mini uses M4 Pro, with up to a 20-core GPU and 273 GB/s memory bandwidth. Based on the 4x GPU-core and 3x bandwidth gap, moderated by newer M4 GPU cores, expect roughly 2.5-3.5x the M3 Ultra wall time until a real M4 Pro benchmark is available. The five-second Full4 Turbo4 workflow is therefore estimated at about 9-14 minutes on a 20-core M4 Pro Mac mini; the 16-core GPU configuration may take longer. This is an estimate, not a measured result.
 
-Pruned full8 was also measured as a memory experiment. It reduced the denoise MLX peak from 36.16 GB to 25.34 GB and process footprint from 44.02 GB to 32.21 GB, but destroyed the generated scene and audio. The pruned16 and pruned8 outputs had 0.997 waveform correlation with each other and only 0.211 with the normal full-width full8 output. The memory saving is therefore not exposed as a usable profile.
-
 ## Experimental block streaming
 
 The exact Full4 checkpoint can be repacked so fixed modules stay resident while the 50 main DiT blocks load in five-block chunks. AdaLN chunks are read once to build the full-width BF16 modulation cache; only core chunks are reread on every denoise forward.
@@ -121,7 +124,7 @@ python3 scripts/build_streaming_checkpoint.py \
   --chunk-size 5
 ```
 
-Pass the resulting directory as `--transformer`. The staged runner detects `streaming_manifest.json` automatically. First Block Cache is not currently supported with streamed blocks.
+Pass the resulting directory as `--transformer`. The staged runner detects `streaming_manifest.json` automatically. Streaming supports the same Safe First Block Cache used by Quality20.
 
 Measured on the same 80-core M3 Ultra at 864x480, five seconds, Qwen8, Turbo4, and tiled Metal Sol-Attn:
 
@@ -148,6 +151,19 @@ Replacing runtime Qwen quantization with the pinned prequantized Qwen8 subset re
 | Swap growth | 0 GB |
 
 The generated video was normal and dynamic; audio waveform correlation against the runtime-quantized baseline was 0.9844. This makes 32 GB a viable experimental memory target, not a speed claim for 32 GB hardware. The standard resident Full4 profile remains the recommended 48 GB configuration.
+
+The repaired BF16-pruned stream2 profile was measured with prequantized Qwen8, Turbo4, and Sol-Attn:
+
+| Metric | BF16-pruned stream2 |
+| --- | ---: |
+| Wall time | 234.30 s |
+| Denoise | 171.88 s |
+| Denoise MLX peak | 7.63 GB |
+| Process footprint | 24.70 GB |
+| Core data read | 154.15 GB |
+| Swap growth | 0 GB |
+
+The corrected resident and stream2 videos both contain the expected moving sports car and neon city. Audio waveform correlation between them was 0.906. Timings are from the 80-core M3 Ultra test machine; 48/64 GB systems should treat BF16 stream2 as a quality-first, SSD-intensive mode.
 
 ## Command-line generation
 

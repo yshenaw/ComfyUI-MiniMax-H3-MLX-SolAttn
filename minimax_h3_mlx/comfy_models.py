@@ -24,6 +24,8 @@ QWEN_FILES = (
 TRANSFORMER_REPOS = {
     "4-bit": "pipenetwork/MiniMax-H3-MLX-4bit",
     "8-bit": "pipenetwork/MiniMax-H3-MLX-8bit",
+    "bf16": "pipenetwork/MiniMax-H3-MLX-bf16",
+    "bf16-pruned": "Comfy-Org/MiniMax-H3",
 }
 TURBO_REPO = "larryvrh/MiniMax-H3-Turbo-Lora"
 TURBO_FILENAME = "minimax_h3_turbo_4step_ema_ckpt850.safetensors"
@@ -31,10 +33,12 @@ TURBO_FILENAME = "minimax_h3_turbo_4step_ema_ckpt850.safetensors"
 
 @dataclass(frozen=True)
 class ModelPaths:
+    profile: str
     root: Path
     checkpoint: Path
     qwen: Path
     transformer: Path
+    streaming_transformer_2: Path
     streaming_transformer: Path
     lora: Path
 
@@ -66,26 +70,42 @@ def model_paths(profile: str, models_dir: str | Path | None = None) -> ModelPath
     models = Path(models_dir).expanduser().resolve() if models_dir else default_models_dir()
     root = models / "minimax_h3"
     return ModelPaths(
+        profile=profile,
         root=root,
         checkpoint=root / "upstream" / "FL2VA",
         qwen=root / "qwen" / "8-bit",
         transformer=root / "transformers" / profile,
+        streaming_transformer_2=root / "transformers" / f"{profile}-stream2",
         streaming_transformer=root / "transformers" / f"{profile}-stream5",
         lora=root / "loras" / TURBO_FILENAME,
     )
 
 
 def missing_model_files(paths: ModelPaths) -> list[Path]:
-    required = (
+    required = [
         paths.checkpoint / "model_index.json",
         paths.checkpoint / "video_vae" / "config.json",
         paths.checkpoint / "audio_vae" / "config.json",
         *(paths.qwen / name for name in QWEN_FILES),
         paths.transformer / "config.json",
-        paths.transformer / "model.safetensors.index.json",
-        paths.transformer / "quant_config.json",
         paths.lora,
-    )
+    ]
+    if paths.profile in ("4-bit", "8-bit"):
+        required.extend(
+            (
+                paths.transformer / "model.safetensors.index.json",
+                paths.transformer / "quant_config.json",
+            )
+        )
+    elif paths.profile == "bf16":
+        required.append(paths.transformer / "model.safetensors.index.json")
+    else:
+        required.extend(
+            (
+                paths.transformer / "minimax_h3_fl2va_pruned_bf16.safetensors",
+                paths.transformer / "h3_silu_temb_grid.safetensors",
+            )
+        )
     return [path for path in required if not path.is_file()]
 
 

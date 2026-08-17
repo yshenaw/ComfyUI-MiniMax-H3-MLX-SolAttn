@@ -4,7 +4,10 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
+import shutil
 import sys
+import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -28,6 +31,13 @@ UPSTREAM_ALLOW_PATTERNS = [
     "FL2VA/video_vae/**",
     "FL2VA/audio_vae/**",
 ]
+PRUNED_FILENAME = "minimax_h3_fl2va_pruned_bf16.safetensors"
+GRID_FILENAME = "h3_silu_temb_grid.safetensors"
+GRID_SHA256 = "30eb3c2cc7fb6b470d9717ff840d359313ac27cd64b705e32da1baa10f72d6a8"
+GRID_URL = (
+    "https://raw.githubusercontent.com/Larryvrh/ComfyUI-MiniMax-H3-Turbo/"
+    "e7ad532857f2327feb56cf7729a9a76857a6799f/h3_silu_temb_grid.safetensors"
+)
 
 
 @dataclass(frozen=True)
@@ -37,10 +47,13 @@ class DownloadTask:
     allow_patterns: tuple[str, ...] = ()
     filename: str | None = None
     revision: str | None = None
+    destination: Path | None = None
 
 
 def download_plan(profile: str, models_dir: str | Path) -> list[DownloadTask]:
-    profiles = list(TRANSFORMER_REPOS) if profile == "all" else [f"{profile}-bit"]
+    profiles = list(TRANSFORMER_REPOS) if profile == "all" else [
+        profile if profile in ("bf16", "bf16-pruned") else f"{profile}-bit"
+    ]
     first = model_paths(profiles[0], models_dir)
     tasks = [
         DownloadTask(
@@ -61,11 +74,30 @@ def download_plan(profile: str, models_dir: str | Path) -> list[DownloadTask]:
         ),
     ]
     tasks.extend(
-        DownloadTask(
-            repo_id=TRANSFORMER_REPOS[item],
-            local_dir=model_paths(item, models_dir).transformer,
-        )
+        task
         for item in profiles
+        for task in (
+            (
+                DownloadTask(
+                    repo_id="Comfy-Org/MiniMax-H3",
+                    filename=f"diffusion_models/{PRUNED_FILENAME}",
+                    local_dir=model_paths(item, models_dir).transformer,
+                    destination=model_paths(item, models_dir).transformer / PRUNED_FILENAME,
+                ),
+                DownloadTask(
+                    repo_id="pipenetwork/MiniMax-H3-MLX-bf16",
+                    filename="config.json",
+                    local_dir=model_paths(item, models_dir).transformer,
+                ),
+            )
+            if item == "bf16-pruned"
+            else (
+                DownloadTask(
+                    repo_id=TRANSFORMER_REPOS[item],
+                    local_dir=model_paths(item, models_dir).transformer,
+                ),
+            )
+        )
     )
     return tasks
 
@@ -89,12 +121,15 @@ def _download(task: DownloadTask) -> None:
     task.local_dir.mkdir(parents=True, exist_ok=True)
     print(f"\nDownloading {task.repo_id} -> {task.local_dir}", flush=True)
     if task.filename:
-        hf_hub_download(
+        downloaded = Path(hf_hub_download(
             repo_id=task.repo_id,
             filename=task.filename,
             local_dir=task.local_dir,
             revision=task.revision,
-        )
+        ))
+        if task.destination is not None and downloaded.resolve() != task.destination.resolve():
+            task.destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(downloaded), task.destination)
     else:
         snapshot_download(
             repo_id=task.repo_id,
@@ -104,13 +139,30 @@ def _download(task: DownloadTask) -> None:
         )
 
 
+def _install_pruned_grid(destination: Path) -> None:
+    target = destination / GRID_FILENAME
+    if target.is_file() and hashlib.sha256(target.read_bytes()).hexdigest() == GRID_SHA256:
+        return
+    sibling = Path(__file__).resolve().parents[2] / "ComfyUI-MiniMax-H3-Turbo" / GRID_FILENAME
+    target.parent.mkdir(parents=True, exist_ok=True)
+    if sibling.is_file():
+        shutil.copy2(sibling, target)
+    else:
+        temporary = target.with_suffix(".incomplete")
+        urllib.request.urlretrieve(GRID_URL, temporary)
+        temporary.replace(target)
+    if hashlib.sha256(target.read_bytes()).hexdigest() != GRID_SHA256:
+        target.unlink(missing_ok=True)
+        raise RuntimeError("Downloaded H3 timestep grid failed SHA256 validation.")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="One-command MiniMax H3 model setup for ComfyUI on Apple Silicon."
     )
     parser.add_argument(
         "--profile",
-        choices=["4", "8", "all"],
+        choices=["4", "8", "bf16", "bf16-pruned", "all"],
         default="4",
         help="4 is the recommended default; all also downloads the 8-bit quality profile.",
     )
@@ -131,8 +183,18 @@ def main() -> int:
     _accept_license(args.accept_license)
     for task in download_plan(args.profile, models_dir):
         _download(task)
+    if args.profile in ("bf16-pruned", "all"):
+        _install_pruned_grid(model_paths("bf16-pruned", models_dir).transformer)
 
-    installed = "4-bit and 8-bit" if args.profile == "all" else f"{args.profile}-bit"
+    installed = (
+        "4-bit, 8-bit, and BF16"
+        if args.profile == "all"
+        else (
+            "BF16 pruned"
+            if args.profile == "bf16-pruned"
+            else ("BF16" if args.profile == "bf16" else f"{args.profile}-bit")
+        )
+    )
     print(
         f"\nInstalled MiniMax H3 {installed} under {models_dir / 'minimax_h3'}.\n"
         "Restart ComfyUI and load workflows/minimax_h3_mlx_turbo4_sol.json."

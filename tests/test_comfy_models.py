@@ -19,7 +19,15 @@ def test_profiles_share_components_but_select_distinct_transformers(tmp_path):
     assert int4.lora == int8.lora
     assert int4.transformer == tmp_path / "minimax_h3" / "transformers" / "4-bit"
     assert int8.transformer == tmp_path / "minimax_h3" / "transformers" / "8-bit"
+    assert int4.streaming_transformer_2.name == "4-bit-stream2"
     assert int4.lora.name == TURBO_FILENAME
+
+
+def test_bf16_profile_has_stream2_path(tmp_path):
+    paths = model_paths("bf16", tmp_path)
+
+    assert paths.transformer.name == "bf16"
+    assert paths.streaming_transformer_2.name == "bf16-stream2"
 
 
 def test_model_validation_reports_and_accepts_expected_layout(tmp_path):

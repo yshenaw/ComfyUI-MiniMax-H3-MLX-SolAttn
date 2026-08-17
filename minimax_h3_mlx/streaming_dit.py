@@ -14,7 +14,7 @@ from mlx.utils import tree_flatten, tree_unflatten
 from .adaln import ModulationCache
 from .config import MODALITY_NUM, DiTConfig
 from .dit import AdaLayerNormModulation, MiniMaxH3DiT, TransformerBlock, param_dtype
-from .lora import LoRALinear, _linear_input_dim
+from .lora import CurveLoRALinear, LoRALinear, _linear_input_dim
 from .quantize import QuantConfig, apply_quantization_structure
 from .streaming_layout import load_manifest
 
@@ -59,6 +59,7 @@ def _apply_lora_subset(
     source_prefix: str,
     include,
     strength: float,
+    allow_curve: bool = False,
 ) -> int:
     modules = dict(module.named_modules())
     targets = sorted(
@@ -76,12 +77,16 @@ def _apply_lora_subset(
             raise KeyError(f"Streaming LoRA target not found: {source_name} -> {local_name}")
         lora_a = weights[f"{source_name}.lora_A.weight"]
         lora_b = weights[f"{source_name}.lora_B.weight"]
-        if _linear_input_dim(base) != lora_a.shape[-1]:
+        if _linear_input_dim(base) == lora_a.shape[-1]:
+            replacement = LoRALinear(base, lora_a, lora_b, strength)
+        elif allow_curve:
+            replacement = CurveLoRALinear(base, lora_a, lora_b, strength)
+        else:
             raise ValueError(
                 f"Streaming LoRA input mismatch for {source_name}: "
                 f"base={_linear_input_dim(base)}, adapter={lora_a.shape[-1]}."
             )
-        replacements.append((local_name, LoRALinear(base, lora_a, lora_b, strength)))
+        replacements.append((local_name, replacement))
     if replacements:
         module.update_modules(tree_unflatten(replacements))
     return len(replacements)
@@ -101,22 +106,28 @@ class StreamingDiT:
         self.model_dir = Path(model_dir)
         self.manifest = load_manifest(self.model_dir)
         self.config = DiTConfig.from_json(self.model_dir / "config.json")
-        with open(self.model_dir / "quant_config.json") as handle:
-            recipe = json.load(handle)
-        self.quant_config = QuantConfig(
-            bits=recipe["bits"],
-            group_size=recipe["group_size"],
-            quantize_adaln=recipe.get("quantize_adaln", False),
-            adaln_bits=recipe.get("adaln_bits") or 8,
-            overrides={
-                str(path): None if bits is None else int(bits)
-                for path, bits in recipe.get("overrides", {}).items()
-            },
-            group_overrides={
-                str(path): int(group_size)
-                for path, group_size in recipe.get("group_overrides", {}).items()
-            },
-        )
+        curve_shape = self.manifest.get("adaln_curve_shape")
+        self.curve_grid = int(curve_shape[0]) if curve_shape else None
+        self.curve_dim = int(curve_shape[1]) if curve_shape else None
+        quant_path = self.model_dir / "quant_config.json"
+        self.quant_config = None
+        if quant_path.is_file():
+            with open(quant_path) as handle:
+                recipe = json.load(handle)
+            self.quant_config = QuantConfig(
+                bits=recipe["bits"],
+                group_size=recipe["group_size"],
+                quantize_adaln=recipe.get("quantize_adaln", False),
+                adaln_bits=recipe.get("adaln_bits") or 8,
+                overrides={
+                    str(path): None if bits is None else int(bits)
+                    for path, bits in recipe.get("overrides", {}).items()
+                },
+                group_overrides={
+                    str(path): int(group_size)
+                    for path, group_size in recipe.get("group_overrides", {}).items()
+                },
+            )
         self.verbose = bool(verbose)
         self.attention_backend = None
         self.core_load_seconds = 0.0
@@ -125,22 +136,33 @@ class StreamingDiT:
         self.adaln_bytes_read = 0
         self.chunk_loads = 0
 
-        fixed = MiniMaxH3DiT(self.config)
+        fixed = MiniMaxH3DiT(
+            self.config,
+            adaln_curve_grid=self.curve_grid,
+            adaln_curve_dim=self.curve_dim or 8,
+        )
         fixed.blocks = []
         gc.collect()
-        apply_quantization_structure(fixed, self.quant_config)
+        if self.quant_config is not None:
+            apply_quantization_structure(fixed, self.quant_config)
         fixed_weights = _load_parts(self.model_dir, self.manifest["fixed_files"])
         _update_strict(fixed, fixed_weights, "")
         del fixed_weights
+        if self.curve_grid is not None:
+            curve_file = self.model_dir / self.manifest["full_curve_file"]
+            fixed._adaln_lora_t_table = mx.load(str(curve_file))["silu_t_emb_grid"]
 
         self.lora_weights = mx.load(str(Path(lora_path))) if lora_path is not None else {}
-        _apply_lora_subset(
+        curve_lora = _apply_lora_subset(
             fixed,
             self.lora_weights,
             source_prefix="",
             include=lambda name: not name.startswith("blocks."),
             strength=lora_strength,
+            allow_curve=self.curve_grid is not None,
         )
+        if self.curve_grid is not None and curve_lora:
+            fixed._adaln_curve_lora_enabled = True
         mx.eval(fixed.parameters())
         self.fixed = fixed
         self.lora_strength = float(lora_strength)
@@ -149,8 +171,12 @@ class StreamingDiT:
         self.attention_backend = backend
 
     def _new_adaln(self, block_index: int, weights: dict[str, mx.array]):
-        projection = AdaLayerNormModulation(self.config)
-        if self.quant_config.quantize_adaln:
+        projection = AdaLayerNormModulation(
+            self.config,
+            input_dim=self.curve_dim,
+            apply_silu=self.curve_grid is None,
+        )
+        if self.quant_config is not None and self.quant_config.quantize_adaln:
             nn.quantize(
                 projection,
                 group_size=self.quant_config.group_size,
@@ -172,6 +198,7 @@ class StreamingDiT:
             source_prefix=prefix,
             include=lambda _name: True,
             strength=self.lora_strength,
+            allow_curve=self.curve_grid is not None,
         )
         return projection
 
@@ -200,19 +227,20 @@ class StreamingDiT:
     def _new_block(self, block_index: int, weights: dict[str, mx.array]):
         block = TransformerBlock(self.config)
         block.adaln_proj.linear = None
-        nn.quantize(
-            block,
-            group_size=self.quant_config.group_size,
-            bits=self.quant_config.bits,
-            class_predicate=lambda path, module: (
-                {
-                    "group_size": self.quant_config.group_size,
-                    "bits": self.quant_config.bits,
-                }
-                if path in _CORE_LINEAR_PATHS and isinstance(module, nn.Linear)
-                else False
-            ),
-        )
+        if self.quant_config is not None:
+            nn.quantize(
+                block,
+                group_size=self.quant_config.group_size,
+                bits=self.quant_config.bits,
+                class_predicate=lambda path, module: (
+                    {
+                        "group_size": self.quant_config.group_size,
+                        "bits": self.quant_config.bits,
+                    }
+                    if path in _CORE_LINEAR_PATHS and isinstance(module, nn.Linear)
+                    else False
+                ),
+            )
         prefix = f"blocks.{block_index}."
         _update_strict(block, weights, prefix)
         _apply_lora_subset(
@@ -291,6 +319,8 @@ class StreamingDiT:
     def summary(self) -> dict[str, object]:
         return {
             "format": self.manifest["format"],
+            "quantized": self.quant_config is not None,
+            "adaln_curve_dim": self.curve_dim,
             "chunk_size": self.manifest["chunk_size"],
             "chunk_loads": self.chunk_loads,
             "core_gb_read": self.core_bytes_read / 1e9,
