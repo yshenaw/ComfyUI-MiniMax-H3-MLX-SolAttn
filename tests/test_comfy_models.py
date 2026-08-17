@@ -30,6 +30,14 @@ def test_bf16_profile_has_stream2_path(tmp_path):
     assert paths.streaming_transformer_2.name == "bf16-stream2"
 
 
+@pytest.mark.parametrize("profile", ["4-bit-pruned", "8-bit-pruned"])
+def test_pruned_quant_profiles_have_distinct_resident_paths(tmp_path, profile):
+    paths = model_paths(profile, tmp_path)
+
+    assert paths.transformer.name == profile
+    assert paths.streaming_transformer_2.name == f"{profile}-stream2"
+
+
 def test_model_validation_reports_and_accepts_expected_layout(tmp_path):
     paths = model_paths("4-bit", tmp_path)
     missing = missing_model_files(paths)

@@ -2,6 +2,8 @@ import importlib.util
 import sys
 from pathlib import Path
 
+import pytest
+
 from minimax_h3_mlx.comfy_models import TURBO_FILENAME
 
 
@@ -55,3 +57,12 @@ def test_pruned_bf16_plan_uses_comfy_weights_and_mlx_config(tmp_path):
     assert tasks[-2].destination.name == "minimax_h3_fl2va_pruned_bf16.safetensors"
     assert tasks[-1].repo_id == "pipenetwork/MiniMax-H3-MLX-bf16"
     assert tasks[-1].filename == "config.json"
+
+
+@pytest.mark.parametrize("profile", ["4-pruned", "8-pruned"])
+def test_pruned_quant_plan_downloads_shared_bf16_source(profile, tmp_path):
+    tasks = SETUP.download_plan(profile, tmp_path)
+
+    assert tasks[-2].repo_id == "Comfy-Org/MiniMax-H3"
+    assert tasks[-2].destination.name == "minimax_h3_fl2va_pruned_bf16.safetensors"
+    assert tasks[-1].repo_id == "pipenetwork/MiniMax-H3-MLX-bf16"

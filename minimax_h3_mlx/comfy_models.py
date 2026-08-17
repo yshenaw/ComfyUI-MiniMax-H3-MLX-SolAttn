@@ -26,6 +26,8 @@ TRANSFORMER_REPOS = {
     "8-bit": "pipenetwork/MiniMax-H3-MLX-8bit",
     "bf16": "pipenetwork/MiniMax-H3-MLX-bf16",
     "bf16-pruned": "Comfy-Org/MiniMax-H3",
+    "4-bit-pruned": "local:bf16-pruned",
+    "8-bit-pruned": "local:bf16-pruned",
 }
 TURBO_REPO = "larryvrh/MiniMax-H3-Turbo-Lora"
 TURBO_FILENAME = "minimax_h3_turbo_4step_ema_ckpt850.safetensors"
@@ -90,13 +92,15 @@ def missing_model_files(paths: ModelPaths) -> list[Path]:
         paths.transformer / "config.json",
         paths.lora,
     ]
-    if paths.profile in ("4-bit", "8-bit"):
+    if paths.profile in ("4-bit", "8-bit", "4-bit-pruned", "8-bit-pruned"):
         required.extend(
             (
                 paths.transformer / "model.safetensors.index.json",
                 paths.transformer / "quant_config.json",
             )
         )
+        if paths.profile.endswith("-pruned"):
+            required.append(paths.transformer / "h3_silu_temb_grid.safetensors")
     elif paths.profile == "bf16":
         required.append(paths.transformer / "model.safetensors.index.json")
     else:

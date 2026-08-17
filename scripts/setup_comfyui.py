@@ -51,9 +51,19 @@ class DownloadTask:
 
 
 def download_plan(profile: str, models_dir: str | Path) -> list[DownloadTask]:
+    requested = profile
+    if profile in ("4-pruned", "8-pruned"):
+        profile = f"{profile[0]}-bit-pruned"
     profiles = list(TRANSFORMER_REPOS) if profile == "all" else [
-        profile if profile in ("bf16", "bf16-pruned") else f"{profile}-bit"
+        profile
+        if profile in ("bf16", "bf16-pruned", "4-bit-pruned", "8-bit-pruned")
+        else f"{profile}-bit"
     ]
+    download_profiles = []
+    for item in profiles:
+        source_item = "bf16-pruned" if item.endswith("-bit-pruned") else item
+        if source_item not in download_profiles:
+            download_profiles.append(source_item)
     first = model_paths(profiles[0], models_dir)
     tasks = [
         DownloadTask(
@@ -75,7 +85,7 @@ def download_plan(profile: str, models_dir: str | Path) -> list[DownloadTask]:
     ]
     tasks.extend(
         task
-        for item in profiles
+        for item in download_profiles
         for task in (
             (
                 DownloadTask(
@@ -100,6 +110,30 @@ def download_plan(profile: str, models_dir: str | Path) -> list[DownloadTask]:
         )
     )
     return tasks
+
+
+def _build_pruned_quant(profile: str, models_dir: Path) -> None:
+    if profile not in ("4-pruned", "8-pruned"):
+        return
+    bits = int(profile[0])
+    source = model_paths("bf16-pruned", models_dir).transformer
+    output = model_paths(f"{bits}-bit-pruned", models_dir).transformer
+    if (output / "model.safetensors.index.json").is_file():
+        return
+    if output.exists() and any(output.iterdir()):
+        raise FileExistsError(f"Incomplete pruned quant output exists: {output}")
+    import subprocess
+
+    subprocess.run(
+        [
+            sys.executable,
+            str(Path(__file__).with_name("build_pruned_quant_low_memory.py")),
+            "--source", str(source),
+            "--out", str(output),
+            "--bits", str(bits),
+        ],
+        check=True,
+    )
 
 
 def _accept_license(non_interactive: bool) -> None:
@@ -162,7 +196,7 @@ def main() -> int:
     )
     parser.add_argument(
         "--profile",
-        choices=["4", "8", "bf16", "bf16-pruned", "all"],
+        choices=["4", "8", "4-pruned", "8-pruned", "bf16", "bf16-pruned", "all"],
         default="4",
         help="4 is the recommended default; all also downloads the 8-bit quality profile.",
     )
@@ -185,6 +219,12 @@ def main() -> int:
         _download(task)
     if args.profile in ("bf16-pruned", "all"):
         _install_pruned_grid(model_paths("bf16-pruned", models_dir).transformer)
+    if args.profile in ("4-pruned", "8-pruned"):
+        _install_pruned_grid(model_paths("bf16-pruned", models_dir).transformer)
+        _build_pruned_quant(args.profile, models_dir)
+    elif args.profile == "all":
+        _build_pruned_quant("4-pruned", models_dir)
+        _build_pruned_quant("8-pruned", models_dir)
 
     installed = (
         "4-bit, 8-bit, and BF16"
@@ -192,7 +232,11 @@ def main() -> int:
         else (
             "BF16 pruned"
             if args.profile == "bf16-pruned"
-            else ("BF16" if args.profile == "bf16" else f"{args.profile}-bit")
+            else (
+                f"{args.profile[0]}-bit pruned"
+                if args.profile in ("4-pruned", "8-pruned")
+                else ("BF16" if args.profile == "bf16" else f"{args.profile}-bit")
+            )
         )
     )
     print(

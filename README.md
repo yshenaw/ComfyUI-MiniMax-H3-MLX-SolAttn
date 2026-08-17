@@ -12,6 +12,8 @@ The node supports quantized fast profiles and BF16 quality profiles. Setup downl
 | --- | ---: | ---: | --- |
 | 4-bit core + 8-bit full AdaLN | about 25.3 GB | 11.45 GB | Recommended default; lower memory and faster linear layers |
 | 8-bit core + 8-bit full AdaLN | about 35.3 GB | 21.47 GB | Higher fidelity; 64 GB+ recommended |
+| 4-bit core + pruned 8-bit AdaLN | about 11.5 GB | 11.33 GB | 32 GB resident default |
+| 8-bit core + pruned 8-bit AdaLN | about 21.5 GB | 21.35 GB | 48 GB resident default |
 | BF16 core + rank-8 pruned AdaLN | about 40.2 GB | 40.2 GB | 48/64 GB high-quality stream2 tier |
 | BF16 core + full-width AdaLN | about 66.3 GB | 40.3 GB | 96 GB+ full-quality tier |
 
@@ -59,6 +61,10 @@ python3 scripts/setup_comfyui.py --profile 8
 # Install the BF16-pruned quality profile for stream2
 python3 scripts/setup_comfyui.py --profile bf16-pruned
 
+# Build resident pruned quant profiles locally from the shared BF16 source
+python3 scripts/setup_comfyui.py --profile 4-pruned
+python3 scripts/setup_comfyui.py --profile 8-pruned
+
 # Install both transformer profiles
 python3 scripts/setup_comfyui.py --profile all
 
@@ -67,6 +73,8 @@ python3 scripts/setup_comfyui.py --profile 4 --accept-license
 ```
 
 For unusual ComfyUI layouts, pass `--models-dir /path/to/ComfyUI/models` or set `MINIMAX_H3_MODELS_DIR` before starting ComfyUI.
+
+The pruned quant profiles are never downloaded as third-party converted weights. Setup downloads the official BF16-pruned checkpoint and converts one block at a time. Measured converter peak RSS was 3.43 GB; Full4-pruned took 65 seconds and Full8-pruned 94 seconds on the M3 Ultra test system.
 
 ## Use
 
