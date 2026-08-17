@@ -117,16 +117,14 @@ class MiniMaxH3MLXGenerate:
 
         paths = require_models(model_profile)
         preset = PRESETS[generation_profile]
-        if memory_mode == "auto":
-            import os
+        import os
 
-            physical_gb = os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES") / 1e9
+        physical_gb = os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES") / 1e9
+        if memory_mode == "auto":
             if model_profile == "bf16":
                 memory_mode = "stream2" if physical_gb < 96.0 else "resident"
             else:
                 memory_mode = "stream5" if physical_gb < 40.0 else "resident"
-        else:
-            physical_gb = 32.0 if memory_mode in ("stream2", "stream5") else 48.0
         qwen_stages = 2 if physical_gb < 40.0 else 1
         transformer = {
             "resident": paths.transformer,
