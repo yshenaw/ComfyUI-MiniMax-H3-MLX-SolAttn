@@ -81,6 +81,13 @@ def _interleave_qkv_rows(key: str, tensor: mx.array, config: DiTConfig) -> mx.ar
     return tensor[indices]
 
 
+def _needs_qkv_interleave(
+    curve_shape: tuple[int, int] | None,
+    qkv_layout: str | None,
+) -> bool:
+    return curve_shape is not None and qkv_layout != "interleaved"
+
+
 def load_dit(
     model_dir: str | Path,
     dtype: mx.Dtype | None = None,
@@ -113,11 +120,13 @@ def load_dit(
     # scales and biases, so the module tree has to be quantized *before* loading or the keys will
     # not line up — the same recipe is replayed from the file rather than guessed.
     quant_path = model_dir / "quant_config.json"
+    qkv_layout = None
     if quant_path.exists():
         from .quantize import QuantConfig, apply_quantization_structure
 
         with open(quant_path) as fh:
             recipe = json.load(fh)
+        qkv_layout = recipe.get("qkv_layout")
         apply_quantization_structure(
             model,
             QuantConfig(
@@ -151,7 +160,9 @@ def load_dit(
             if key not in expected:
                 unexpected.append(key)
                 continue
-            if curve_shape is not None:
+            # Raw Comfy curve checkpoints and legacy derived quants use [Q][K][V].
+            # New converters record their already-interleaved output explicitly.
+            if _needs_qkv_interleave(curve_shape, qkv_layout):
                 tensor = _interleave_qkv_rows(key, tensor, config)
             if dtype is not None:
                 # Bulk conversion of the whole 33B stack. Done on the CPU stream and materialized

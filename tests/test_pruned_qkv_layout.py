@@ -1,6 +1,6 @@
 import mlx.core as mx
 
-from minimax_h3_mlx.load import _interleave_qkv_rows
+from minimax_h3_mlx.load import _interleave_qkv_rows, _needs_qkv_interleave
 from test_dit_smoke import tiny_config
 
 
@@ -34,3 +34,10 @@ def test_non_curve_parameter_is_unchanged():
     tensor = mx.arange(12).reshape(6, 2)
 
     assert _interleave_qkv_rows("blocks.0.mlp.fc1.weight", tensor, config) is tensor
+
+
+def test_qkv_layout_metadata_prevents_double_interleave():
+    assert _needs_qkv_interleave((1025, 8), None)
+    assert _needs_qkv_interleave((1025, 8), "separate_qkv")
+    assert not _needs_qkv_interleave((1025, 8), "interleaved")
+    assert not _needs_qkv_interleave(None, None)

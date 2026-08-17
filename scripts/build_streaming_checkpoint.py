@@ -44,7 +44,9 @@ def main() -> int:
     out.mkdir(parents=True, exist_ok=True)
     shutil.copy(source / "config.json", out / "config.json")
     quant_config = source / "quant_config.json"
+    source_qkv_layout = None
     if quant_config.is_file():
+        source_qkv_layout = json.loads(quant_config.read_text()).get("qkv_layout")
         shutil.copy(quant_config, out / "quant_config.json")
     full_curve = source / "h3_silu_temb_grid.safetensors"
     if curve_shape is not None:
@@ -60,7 +62,7 @@ def main() -> int:
         for key, value in loaded.items():
             if key in SKIP_KEYS:
                 continue
-            if curve_shape is not None:
+            if curve_shape is not None and source_qkv_layout != "interleaved":
                 value = _interleave_qkv_rows(key, value, config)
             group, chunk_start = tensor_group(key, args.chunk_size)
             label = group if chunk_start is None else f"{group}-{chunk_start:03d}"
@@ -98,6 +100,7 @@ def main() -> int:
         "num_blocks": config.num_layers,
         "adaln_curve_shape": list(curve_shape) if curve_shape is not None else None,
         "full_curve_file": full_curve.name if curve_shape is not None else None,
+        "qkv_layout": "interleaved",
         "fixed_files": files["fixed"],
         "fixed_bytes": sizes["fixed"],
         "chunks": chunks,

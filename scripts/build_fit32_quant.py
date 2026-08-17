@@ -217,6 +217,7 @@ def main() -> int:
         "gb_on_disk": round(footprint["total_gb"], 2),
         "gb_resident_after_adaln_drop": round(footprint["resident_gb"], 2),
         "recipe": recipe_name,
+        "qkv_layout": "interleaved",
     }
 
     out.mkdir(parents=True, exist_ok=True)

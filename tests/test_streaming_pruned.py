@@ -104,5 +104,6 @@ def test_pruned_stream2_matches_resident_with_full_width_lora(tmp_path):
     mx.eval(expected_video, expected_audio, actual_video, actual_audio)
 
     assert streaming.summary()["adaln_curve_dim"] == 8
+    assert streaming.manifest["qkv_layout"] == "interleaved"
     assert mx.array_equal(actual_video, expected_video).item()
     assert mx.array_equal(actual_audio, expected_audio).item()

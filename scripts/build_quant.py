@@ -123,6 +123,7 @@ def main() -> int:
             "quantized_layers": {str(k): v for k, v in summary["quantized_layers"].items()},
             "gb_on_disk": round(footprint["total_gb"], 2),
             "gb_resident_after_adaln_drop": round(footprint["resident_gb"], 2),
+            "qkv_layout": "interleaved",
         }
         with open(out_dir / "quant_config.json", "w") as fh:
             json.dump(quant_meta, fh, indent=2)
