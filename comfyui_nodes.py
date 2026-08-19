@@ -33,7 +33,17 @@ def _memory_mode(profile: str, requested: str, physical_gb: float) -> str:
         return "resident" if physical_gb >= 96.0 else "stream2"
     if profile == "bf16-pruned":
         return "resident" if physical_gb >= 96.0 else "stream2"
+    if profile == "4-bit-pruned" and physical_gb < 30.0:
+        return "stream2"
     return "resident"
+
+
+def _stream_io(memory_mode: str, requested: str, physical_gb: float) -> str | None:
+    if not memory_mode.startswith("stream"):
+        return None
+    if requested != "auto":
+        return requested
+    return "offset" if physical_gb < 30.0 else "mlx"
 
 
 def _comfy_outputs(result):
@@ -66,7 +76,7 @@ class MiniMaxH3MLXGenerate:
                 "model_profile": (
                     list(TRANSFORMER_REPOS),
                     {
-                        "default": "4-bit",
+                        "default": "4-bit-pruned",
                         "tooltip": "Pruned Core4/Core8/Attention16-MLP8 are the 32/48/64 GB resident tiers.",
                     },
                 ),
@@ -106,6 +116,13 @@ class MiniMaxH3MLXGenerate:
                         "tooltip": "Use Safe First Block Cache for Full 20; Turbo modes ignore this setting.",
                     },
                 ),
+                "stream_io": (
+                    ["auto", "offset", "mlx"],
+                    {
+                        "default": "auto",
+                        "tooltip": "24 GB auto mode uses uncached offset streaming; larger tiers keep standard MLX loading.",
+                    },
+                ),
             },
         }
 
@@ -133,6 +150,7 @@ class MiniMaxH3MLXGenerate:
         seed,
         sol_tau=1.3,
         full20_fbc=True,
+        stream_io="auto",
     ):
         if width % 32 or height % 32:
             raise ValueError("MiniMax H3 width and height must be multiples of 32.")
@@ -143,6 +161,7 @@ class MiniMaxH3MLXGenerate:
 
         physical_gb = os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES") / 1e9
         memory_mode = _memory_mode(model_profile, memory_mode, physical_gb)
+        stream_io = _stream_io(memory_mode, stream_io, physical_gb)
         qwen_stages = 2 if physical_gb < 40.0 else 1
         transformer = {
             "resident": paths.transformer,
@@ -184,6 +203,7 @@ class MiniMaxH3MLXGenerate:
             qwen_dir=paths.qwen,
             qwen_bits=None,
             qwen_stages=qwen_stages,
+            stream_io=stream_io,
             first_block_cache=_first_block_cache(preset, full20_fbc),
             attention_backend=backend,
             verbose=True,

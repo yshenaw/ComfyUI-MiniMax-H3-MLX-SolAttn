@@ -1,14 +1,14 @@
 {
-  "id": "7d40c7bc-0ab5-4e56-bb28-3471ee2228c6",
+  "id": "1d10b745-3dcc-4771-b57e-433072a3fe7d",
   "revision": 0,
   "last_node_id": 5,
   "last_link_id": 4,
   "nodes": [
     {
       "id": 1,
-      "type": "MiniMaxH3MLXTurbo",
+      "type": "MiniMaxH3MLXGenerate",
       "pos": [-720, 20],
-      "size": [540, 490],
+      "size": [560, 540],
       "flags": {},
       "order": 0,
       "mode": 0,
@@ -18,12 +18,12 @@
         {"name": "audio", "type": "AUDIO", "links": [2, 4]},
         {"name": "stats", "type": "STRING", "links": null}
       ],
-      "properties": {"Node name for S&R": "MiniMaxH3MLXTurbo"},
+      "properties": {"Node name for S&R": "MiniMaxH3MLXGenerate"},
       "widgets_values": [
-        "A cinematic tracking shot of a red sports car driving through a neon-lit city in the rain. Reflections flow across the wet street while the camera follows smoothly. Audio: tires on wet pavement, restrained engine sound, distant city ambience, no speech.",
+        "A cinematic close-up of a handcrafted ceramic cup on a wooden studio table. Warm morning light moves slowly across the glaze while the camera makes a gentle orbit. Keep the cup shape consistent, no cuts, no text. Audio: quiet room tone, subtle ceramic touch, soft fabric movement, no music.",
         "4-bit-pruned",
         "Turbo 4 Fast",
-        "auto",
+        "stream2",
         "prequantized 8-bit",
         "sol_attn",
         864,
@@ -31,7 +31,8 @@
         5.0,
         42,
         1.3,
-        true
+        true,
+        "offset"
       ]
     },
     {
@@ -61,7 +62,7 @@
       "inputs": [{"name": "video", "type": "VIDEO", "link": 3}],
       "outputs": [{"name": "video", "type": "VIDEO", "links": null}],
       "properties": {"Node name for S&R": "SaveVideo"},
-      "widgets_values": ["video/minimax_h3_mlx_turbo4_sol", "auto", "auto"]
+      "widgets_values": ["video/minimax_h3_mlx_24gb_turbo4_sol", "auto", "auto"]
     },
     {
       "id": 4,
@@ -74,21 +75,21 @@
       "inputs": [{"name": "audio", "type": "AUDIO", "link": 4}],
       "outputs": [],
       "properties": {"Node name for S&R": "SaveAudio"},
-      "widgets_values": ["audio/minimax_h3_mlx_turbo4_sol"]
+      "widgets_values": ["audio/minimax_h3_mlx_24gb_turbo4_sol"]
     },
     {
       "id": 5,
       "type": "MarkdownNote",
-      "pos": [-720, 570],
-      "size": [980, 220],
+      "pos": [-720, 610],
+      "size": [980, 250],
       "flags": {},
       "order": 4,
       "mode": 0,
       "inputs": [],
       "outputs": [],
-      "title": "MiniMax H3 MLX Turbo4",
+      "title": "MiniMax H3 MLX — 24 GB Creator Preview",
       "properties": {},
-      "widgets_values": ["## Powered by MiniMax H3\n\nCreator default for 32 GB and larger Macs: Core4 + pruned AdaLN16, Qwen8 staging, resident DiT, tiled Metal Sol-Attn, and four denoise forwards. For 24 GB, load the dedicated 24 GB workflow instead. Model files are governed by the MiniMax H3 Community License."]
+      "widgets_values": ["## 24 GB Creator Preview\n\nDesigned for 480p, five-second Turbo4 idea previews. Uses Qwen8 staging, Core4 + pruned AdaLN16, two-block uncached offset streaming, eager Video/Audio VAE stages, and Sol-Attn. Measured lifetime footprint: 16.36 GB on the M3 Ultra test host. This tier remains experimental until it is tested on a physical 24 GB Mac.\n\nPowered by MiniMax H3."]
     }
   ],
   "links": [
@@ -98,7 +99,7 @@
     [4, 1, 1, 4, 0, "AUDIO"]
   ],
   "groups": [
-    {"id": 1, "title": "MiniMax H3 MLX", "bounding": [-760, -20, 640, 570], "color": "#28766c", "flags": {}},
+    {"id": 1, "title": "24 GB Creator Preview", "bounding": [-760, -20, 660, 620], "color": "#28766c", "flags": {}},
     {"id": 2, "title": "Outputs", "bounding": [-100, -20, 1080, 480], "color": "#28766c", "flags": {}}
   ],
   "config": {},

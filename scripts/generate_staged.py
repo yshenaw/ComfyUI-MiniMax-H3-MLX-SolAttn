@@ -24,6 +24,7 @@ def main() -> int:
     parser.add_argument("--qwen-dir", default=None)
     parser.add_argument("--qwen-bits", type=int, choices=[4, 8], default=None)
     parser.add_argument("--qwen-stages", choices=["auto", "1", "2"], default="2")
+    parser.add_argument("--stream-io", choices=["mlx", "offset"], default=None)
     parser.add_argument(
         "--first-block-cache",
         choices=["none", "safe", "fast", "aggressive"],
@@ -66,6 +67,7 @@ def main() -> int:
         qwen_dir=args.qwen_dir,
         qwen_bits=args.qwen_bits,
         qwen_stages=args.qwen_stages if args.qwen_stages == "auto" else int(args.qwen_stages),
+        stream_io=args.stream_io,
         first_block_cache=args.first_block_cache,
         attention_backend=attention_backend,
     )

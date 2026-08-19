@@ -1,17 +1,114 @@
-# ComfyUI MiniMax H3 MLX Sol-Attn
+# MiniMax H3 Creator for Mac — MLX + Sol-Attn
 
-Apple Silicon ComfyUI node for MiniMax H3 synchronized video and audio generation. It runs Qwen, the MLX DiT, Video VAE, and Audio VAE as strict stages and includes the tiled Metal Sol-Attn backend.
+Create short videos with native synchronized audio in ComfyUI on Apple Silicon. Pick a memory tier,
+write one prompt, and render directly to MP4. The node stages Qwen, DiT, Video VAE, and Audio VAE so
+large components do not stay loaded together.
 
 > Powered by MiniMax H3.
 
-## Which model should I install?
+## Start here
 
-The node supports quantized fast profiles and BF16 quality profiles. Setup downloads **4-bit only by default**.
+### 1. Choose your Mac
+
+| Unified memory | Creator preset | Setup command | Start with |
+| ---: | --- | --- | --- |
+| **24 GB** | Experimental Preview | `python3 scripts/setup_comfyui.py --profile 24` | 480p · 5 s · Turbo4 |
+| **32 GB** | Low Memory | `python3 scripts/setup_comfyui.py --profile 4-pruned` | 480p · 5 s · Turbo4 |
+| **48 GB** | Balanced | `python3 scripts/setup_comfyui.py --profile 8-pruned` | 480p · 5–15 s |
+| **64 GB+** | High Quality | `python3 scripts/setup_comfyui.py --profile attention16-mlp8` | 480p first, then 720p |
+
+For 96 GB and larger PyTorch BF16 workflows, use
+[`MacOS-H3-Speedrun`](https://github.com/EvolvingLMMs-Lab/MacOS-H3-Speedrun).
+
+### 2. Choose how long you want to wait
+
+| Mode | Best for | Model forwards | Notes |
+| --- | --- | ---: | --- |
+| **Turbo 4 Fast** | Prompt drafts and most creator work | 4 | Recommended starting point |
+| **Turbo 8 Balanced** | Optional second pass | 8 | Slower; perceptual validation is still limited |
+| **Full 20 Quality** | Non-Turbo final comparison | 20 | Safe FBC and Sol-Attn default on |
+
+Sol-Attn is optional and enabled by default. Full20 exposes an FBC toggle; Turbo modes ignore FBC.
+
+### Can I use my other ComfyUI LoRAs?
+
+Not directly through the current MLX node. The packaged workflow applies the tested MiniMax-H3
+Turbo LoRA internally; it does not output a standard ComfyUI `MODEL` object, so generic `Load LoRA`
+or LoRA-stack nodes cannot be inserted in front of it.
+
+| LoRA type | Current MLX workflow | What to expect |
+| --- | --- | --- |
+| Packaged MiniMax-H3 Turbo LoRA | **Yes** | Applied automatically in Turbo4 and Turbo8 |
+| Community LoRA trained specifically for MiniMax-H3 | Conversion required | It must match H3 module names, tensor dimensions, and base checkpoint |
+| Standard ComfyUI `Load LoRA` / LoRA-stack node | **No direct connection** | The MLX generator is a complete staged node, not a ComfyUI `MODEL` pipeline |
+| SD, SDXL, Flux, Wan, or another model family's LoRA | **No** | LoRAs are architecture-specific |
+| Multiple LoRAs at once | Not yet | The MLX runtime currently accepts one adapter path |
+
+The MLX backend itself can apply a matching adapter to BF16, 4-bit, 8-bit, or mixed-precision H3
+linear layers. Community files often use Diffusers or ComfyUI key prefixes and therefore need a
+converter before they can load. A LoRA that modifies full-width AdaLN also needs the aligned H3
+timestep table when used with a pruned-AdaLN base.
+
+Do not assume that a normal style or character LoRA can use Turbo4. Turbo4 and Turbo8 require a
+LoRA trained or distilled for that short schedule. A converted non-Turbo community LoRA should be
+validated with Full20 first. Community-LoRA selection, key conversion, and multi-LoRA stacking are
+planned compatibility work, not current creator controls.
+
+This limitation is the same on 24, 32, 48, and 64 GB profiles; it is a model-format limitation,
+not a unified-memory limit. PyTorch node graphs may support standard ComfyUI LoRA workflows, but
+that does not make the same LoRA automatically compatible with this MLX generator.
+
+### 3. Make your first clip
+
+1. Install this custom node with ComfyUI Manager, or clone it into `ComfyUI/custom_nodes`.
+2. Run the setup command for your memory tier and accept the MiniMax H3 model license.
+3. Restart ComfyUI.
+4. Load `workflows/minimax_h3_mlx_24gb_turbo4_sol.json` on a 24 GB Mac, or
+  `workflows/minimax_h3_mlx_turbo4_sol.json` on larger systems.
+5. Change the prompt, keep the first render at 864x480 and five seconds, then queue it.
+
+The workflow saves both MP4 and WAV outputs through standard ComfyUI nodes.
+
+### A prompt that gives the model enough direction
+
+Use one continuous shot and describe picture, motion, consistency, and sound:
+
+```text
+A cinematic close-up of a handcrafted ceramic cup on a wooden studio table.
+Warm morning light moves slowly across the glaze while the camera makes a gentle orbit.
+Keep the cup shape consistent, no cuts, no text.
+Audio: quiet room tone, subtle ceramic touch, soft fabric movement, no music.
+```
+
+Creator tips:
+
+- Draft at 480p / 5 seconds before committing to a longer render.
+- State what must remain consistent: face, product shape, clothes, camera direction, or location.
+- Describe sound explicitly. Use `no speech` or `no music` when you do not want them.
+- Avoid asking for several cuts in one five-second clip.
+- Turbo4 is the reliable preview path; treat Turbo8 as an optional alternate trajectory.
+
+### About the 24 GB preset
+
+The 24 GB workflow uses Qwen8 25+25 staging, Core4 + pruned AdaLN16, two-block uncached offset
+streaming, eager Video/Audio VAE stages, and Sol-Attn. It measured a **16.36 GB** process lifetime
+peak at 864x480 / 124 frames on the M3 Ultra test host, with media byte-identical to resident output.
+It took 239.27 seconds on that host, about 10.35% longer than resident.
+
+This is still an **experimental** tier because it has not been run on a physical 24 GB Mac. Close
+other memory-heavy applications, use Turbo4, and start with 480p / 5 seconds. The setup temporarily
+needs substantial disk space because it downloads the official BF16-pruned source and builds the
+Core4 resident and stream2 layouts locally; allow roughly 110–120 GB free.
+
+## Technical model reference
+
+The node supports quantized creator profiles and BF16 quality profiles. With no `--profile` flag,
+setup builds the **32 GB Core4-pruned creator default** locally.
 
 | Profile | Transformer download | Resident after AdaLN drop | Use case |
 | --- | ---: | ---: | --- |
-| 4-bit core + 8-bit full AdaLN | about 25.3 GB | 11.45 GB | Recommended default; lower memory and faster linear layers |
-| 8-bit core + 8-bit full AdaLN | about 35.3 GB | 21.47 GB | Higher fidelity; 64 GB+ recommended |
+| 4-bit core + 8-bit full AdaLN | about 25.3 GB | 11.45 GB | Legacy full-width AdaLN profile |
+| 8-bit core + 8-bit full AdaLN | about 35.3 GB | 21.47 GB | Legacy full-width higher-fidelity profile |
 | 4-bit core + pruned 16-bit AdaLN | about 11.4 GB | 11.33 GB | 32 GB resident default |
 | 8-bit core + pruned 16-bit AdaLN | about 21.4 GB | 21.35 GB | 48 GB resident default |
 | 16-bit attention + 8-bit MLP + pruned 16-bit AdaLN | about 29.0 GB | 28.87 GB | 64 GB resident default |
@@ -47,14 +144,16 @@ complete whole-process peak measurement and is therefore recommended only at 96 
 
 The setup downloads a pinned six-shard subset of `lmstudio-community/Qwen3-VL-32B-Instruct-MLX-8bit`: embedding plus layers 0-49, exactly the part H3 evaluates. Cross-layer unquantized norm tensors are byte-identical to the MiniMax H3 Qwen checkpoint. The unused final 14 layers, LM head, and seventh shard are not downloaded.
 
-Budget roughly **70 GB free for the default 4-bit setup**, or **105 GB for both transformer profiles**. This includes the 32.13 GB prequantized Qwen8 subset and avoids the roughly 65 GB upstream BF16 text encoder.
+Allow roughly **105 GB free for the default Core4-pruned setup** and **110–120 GB for the 24 GB
+bundle** while it builds both resident and stream2 layouts. This includes the 32.13 GB prequantized
+Qwen8 subset and the official BF16-pruned source used for local conversion.
 
 ## Requirements
 
 - Apple Silicon Mac running macOS
 - ComfyUI with Python 3.11+
-- About 70 GB free disk space for the default profile
-- 48 GB unified memory for the default 4-bit profile; 64 GB+ for a comfortable 8-bit profile
+- About 105 GB free disk space for the default locally built profile
+- 32 GB unified memory for the supported creator default; 24 GB remains experimental
 - Internet access for the initial model download
 
 The tiled Sol bridge uses ComfyUI's MPS-enabled PyTorch. MLX activations and Q/K/V are BF16; online softmax and scheduler updates accumulate in FP32.
@@ -70,7 +169,7 @@ cd ComfyUI-MiniMax-H3-MLX-SolAttn
 python3 -m pip install -r requirements.txt
 ```
 
-Download the recommended 4-bit model set with one command:
+Download and build the 32 GB creator model set with one command:
 
 ```bash
 python3 scripts/setup_comfyui.py
@@ -81,6 +180,9 @@ The command asks you to accept the MiniMax H3 Community License, then installs m
 Optional profiles:
 
 ```bash
+# Build the experimental 24 GB Core4 stream2 bundle
+python3 scripts/setup_comfyui.py --profile 24
+
 # Install the 8-bit transformer instead of 4-bit
 python3 scripts/setup_comfyui.py --profile 8
 
@@ -111,9 +213,10 @@ The pruned quant profiles are never downloaded as third-party converted weights.
 2. Load `workflows/minimax_h3_mlx_turbo4_sol.json` from this repository.
 3. Edit the prompt and queue the workflow.
 
-The workflow saves an MP4 and WAV using ComfyUI's core `CreateVideo`, `SaveVideo`, and `SaveAudio` nodes. Its defaults are the tested 48 GB configuration:
+The workflow saves an MP4 and WAV using ComfyUI's core `CreateVideo`, `SaveVideo`, and `SaveAudio`
+nodes. The generic workflow starts with the 32 GB creator configuration:
 
-- DiT: 4-bit core with full-width 8-bit AdaLN
+- DiT: Core4 with pruned AdaLN16, resident
 - Qwen: prequantized 8-bit, independently staged as layers 0-24 and 25-49
 - Sampler: Turbo4, four model forwards
 - Attention: tiled Metal Sol-Attn, sparse middle 20%-90%
@@ -132,7 +235,10 @@ The same node exposes three workflow presets:
 
 Sol-Attn is optional and enabled by default for every preset. Full 20 exposes Safe First Block Cache as a separate option and enables it by default; Turbo modes ignore the FBC setting. Turbo8 is available as a balanced preset but has not yet completed the same perceptual validation as Turbo4.
 
-`memory_mode=auto` keeps quantized and mixed resident profiles resident. BF16-pruned and full BF16 use stream2 below 96 GB. Prequantized Qwen8 uses 25+25 stages below 40 GB and a single 50-layer stage otherwise.
+`memory_mode=auto` selects Core4 stream2 below 30 decimal GB and keeps quantized/mixed profiles
+resident above that threshold. `stream_io=auto` selects uncached offset reads for the 24 GB path.
+BF16-pruned and full BF16 use stream2 below 96 GB. Prequantized Qwen8 uses 25+25 stages below 40 GB
+and a single 50-layer stage otherwise.
 
 ## Measured result
 
@@ -206,9 +312,10 @@ The corrected resident and stream2 videos both contain the expected moving sport
 
 ### Experimental offset I/O
 
-Set `MINIMAX_H3_STREAM_IO=offset` to replace core-chunk `mx.load()` calls with direct
-safetensors `pread`, best-effort macOS `F_NOCACHE`, and one-chunk lookahead prefetch. The default
-remains `mx.load`. This mode is intended for memory experiments, not as the release default.
+Set `stream_io=offset` in the node, pass `--stream-io offset` on the command line, or set
+`MINIMAX_H3_STREAM_IO=offset` to replace core-chunk `mx.load()` calls with direct safetensors
+`pread`, best-effort macOS `F_NOCACHE`, and one-chunk lookahead prefetch. The dedicated 24 GB
+workflow enables this automatically; other profiles keep standard MLX loading by default.
 
 The minimal Core4 + pruned AdaLN16 prototype used one block per chunk at 864x480, 124 frames,
 Turbo4, Qwen8, and Sol-Attn:

@@ -59,7 +59,7 @@ def test_pruned_bf16_plan_uses_comfy_weights_and_mlx_config(tmp_path):
     assert tasks[-1].filename == "config.json"
 
 
-@pytest.mark.parametrize("profile", ["4-pruned", "8-pruned"])
+@pytest.mark.parametrize("profile", ["24", "4-pruned", "8-pruned"])
 def test_pruned_quant_plan_downloads_shared_bf16_source(profile, tmp_path):
     tasks = SETUP.download_plan(profile, tmp_path)
 
@@ -97,3 +97,28 @@ def test_attention16_mlp8_build_uses_validated_adaln16_recipe(tmp_path, monkeypa
 
     assert len(commands) == 1
     assert commands[0][-2:] == ["--recipe", "attention16-mlp8-adaln16"]
+
+
+def test_24gb_build_creates_core4_adaln16_and_stream2(tmp_path, monkeypatch):
+    commands = []
+    monkeypatch.setattr("subprocess.run", lambda command, check: commands.append(command))
+
+    SETUP._build_pruned_quant("24", tmp_path)
+
+    assert len(commands) == 2
+    assert commands[0][-4:] == ["--bits", "4", "--adaln-bits", "16"]
+    assert commands[1][-2:] == ["--chunk-size", "2"]
+    assert commands[1][commands[1].index("--out") + 1].endswith("4-bit-pruned-stream2")
+
+
+def test_24gb_build_resumes_with_stream2_when_resident_exists(tmp_path, monkeypatch):
+    resident = tmp_path / "minimax_h3" / "transformers" / "4-bit-pruned"
+    resident.mkdir(parents=True)
+    (resident / "model.safetensors.index.json").touch()
+    commands = []
+    monkeypatch.setattr("subprocess.run", lambda command, check: commands.append(command))
+
+    SETUP._build_pruned_quant("24", tmp_path)
+
+    assert len(commands) == 1
+    assert commands[0][-2:] == ["--chunk-size", "2"]

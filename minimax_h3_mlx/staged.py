@@ -156,6 +156,7 @@ class StrictStagedTextToVideo:
         qwen_dir: str | Path | None = None,
         qwen_bits: int | None = None,
         qwen_stages: int | str = "auto",
+        stream_io: str | None = None,
         first_block_cache: str = "none",
         attention_backend=None,
         verbose: bool = True,
@@ -164,6 +165,8 @@ class StrictStagedTextToVideo:
             raise ValueError(f"`qwen_bits` must be None, 4, or 8, got {qwen_bits}.")
         if qwen_stages not in ("auto", 1, 2):
             raise ValueError(f"`qwen_stages` must be auto, 1, or 2, got {qwen_stages!r}.")
+        if stream_io not in (None, "mlx", "offset"):
+            raise ValueError(f"`stream_io` must be mlx or offset, got {stream_io!r}.")
         if first_block_cache not in ("none", *FBC_PRESETS):
             raise ValueError(
                 f"`first_block_cache` must be none, safe, fast, or aggressive, "
@@ -180,6 +183,7 @@ class StrictStagedTextToVideo:
             qwen_stages,
             _physical_memory_gb(),
         )
+        self.stream_io = stream_io
         self.first_block_cache = first_block_cache
         self.attention_backend = attention_backend
         self.verbose = bool(verbose)
@@ -346,6 +350,7 @@ class StrictStagedTextToVideo:
                 self.transformer_dir,
                 lora_path=self.lora_path,
                 lora_strength=self.lora_strength,
+                core_io=self.stream_io,
                 verbose=self.verbose,
             )
         else:

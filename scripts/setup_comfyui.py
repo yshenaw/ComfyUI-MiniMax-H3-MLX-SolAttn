@@ -40,6 +40,7 @@ GRID_URL = (
 )
 
 LOCAL_PROFILE_ALIASES = {
+    "24": "4-bit-pruned",
     "4-pruned": "4-bit-pruned",
     "8-pruned": "8-bit-pruned",
     "attention16-mlp8": "attention16-mlp8-pruned",
@@ -123,30 +124,45 @@ def _build_pruned_quant(profile: str, models_dir: Path) -> None:
         return
     source = model_paths("bf16-pruned", models_dir).transformer
     output = model_paths(LOCAL_PROFILE_ALIASES[profile], models_dir).transformer
-    if (output / "model.safetensors.index.json").is_file():
-        return
-    if output.exists() and any(output.iterdir()):
-        raise FileExistsError(f"Incomplete pruned quant output exists: {output}")
     import subprocess
 
-    if profile == "attention16-mlp8":
-        command = [
-            sys.executable,
-            str(Path(__file__).with_name("build_fit32_quant.py")),
-            "--source", str(source),
-            "--out", str(output),
-            "--recipe", "attention16-mlp8-adaln16",
-        ]
-    else:
-        command = [
-            sys.executable,
-            str(Path(__file__).with_name("build_pruned_quant_low_memory.py")),
-            "--source", str(source),
-            "--out", str(output),
-            "--bits", profile[0],
-            "--adaln-bits", "16",
-        ]
-    subprocess.run(command, check=True)
+    if not (output / "model.safetensors.index.json").is_file():
+        if output.exists() and any(output.iterdir()):
+            raise FileExistsError(f"Incomplete pruned quant output exists: {output}")
+        if profile == "attention16-mlp8":
+            command = [
+                sys.executable,
+                str(Path(__file__).with_name("build_fit32_quant.py")),
+                "--source", str(source),
+                "--out", str(output),
+                "--recipe", "attention16-mlp8-adaln16",
+            ]
+        else:
+            command = [
+                sys.executable,
+                str(Path(__file__).with_name("build_pruned_quant_low_memory.py")),
+                "--source", str(source),
+                "--out", str(output),
+                "--bits", "4" if profile == "24" else profile[0],
+                "--adaln-bits", "16",
+            ]
+        subprocess.run(command, check=True)
+
+    if profile == "24":
+        streamed = model_paths("4-bit-pruned", models_dir).streaming_transformer_2
+        if not (streamed / "streaming_manifest.json").is_file():
+            if streamed.exists() and any(streamed.iterdir()):
+                raise FileExistsError(f"Incomplete streaming output exists: {streamed}")
+            subprocess.run(
+                [
+                    sys.executable,
+                    str(Path(__file__).with_name("build_streaming_checkpoint.py")),
+                    "--source", str(output),
+                    "--out", str(streamed),
+                    "--chunk-size", "2",
+                ],
+                check=True,
+            )
 
 
 def _accept_license(non_interactive: bool) -> None:
@@ -210,11 +226,11 @@ def main() -> int:
     parser.add_argument(
         "--profile",
         choices=[
-            "4", "8", "4-pruned", "8-pruned", "attention16-mlp8",
+            "24", "4", "8", "4-pruned", "8-pruned", "attention16-mlp8",
             "bf16", "bf16-pruned", "all",
         ],
-        default="4",
-        help="4 is the recommended default; all also downloads the 8-bit quality profile.",
+        default="4-pruned",
+        help="4-pruned is the 32 GB creator default; choose 24 for the experimental 24 GB bundle.",
     )
     parser.add_argument(
         "--models-dir",
@@ -247,7 +263,9 @@ def main() -> int:
         "all resident and BF16 profiles"
         if args.profile == "all"
         else (
-            "BF16 pruned"
+            "24 GB Core4 stream2 bundle"
+            if args.profile == "24"
+            else "BF16 pruned"
             if args.profile == "bf16-pruned"
             else (
                 LOCAL_PROFILE_ALIASES[args.profile]
@@ -256,9 +274,14 @@ def main() -> int:
             )
         )
     )
+    workflow = (
+        "workflows/minimax_h3_mlx_24gb_turbo4_sol.json"
+        if args.profile == "24"
+        else "workflows/minimax_h3_mlx_turbo4_sol.json"
+    )
     print(
         f"\nInstalled MiniMax H3 {installed} under {models_dir / 'minimax_h3'}.\n"
-        "Restart ComfyUI and load workflows/minimax_h3_mlx_turbo4_sol.json."
+        f"Restart ComfyUI and load {workflow}."
     )
     return 0
 
