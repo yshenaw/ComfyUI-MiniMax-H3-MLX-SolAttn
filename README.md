@@ -20,6 +20,31 @@ The node supports quantized fast profiles and BF16 quality profiles. Setup downl
 
 The published 4/8-bit profiles keep AdaLN full-width at 8-bit. Locally built pruned profiles use the official rank-8 curve checkpoint and keep that small AdaLN at 16-bit; padding rank 8 to group size 32 made an 8-bit build slightly larger without reducing resident memory. Comfy checkpoints store QKV rows as `[Q][K][V]`; the MLX repacker converts them to the per-head interleaved layout expected by this runtime.
 
+### Whole-process memory
+
+Transformer resident size is not the amount of unified memory required to finish a generation. The
+capacity number to use is the process peak footprint, which also includes MLX allocations, the
+PyTorch MPS Sol-Attn bridge, Python, and transient stage allocations. Qwen, DiT, Video VAE, and
+Audio VAE run as strict sequential stages, so their individual peaks are not added together.
+
+The following measurements use prequantized Qwen8, 864x480, 124 frames, Turbo4, and Sol-Attn on
+the M3 Ultra test system:
+
+| Runtime profile | DiT resident after AdaLN drop | Denoise MLX peak | Process peak RSS | Process peak footprint | Swap growth | Recommended memory |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Core4 + pruned AdaLN16 resident | 11.33 GB | 15.60 GB | 14.31 GB | **24.70 GB** | 0 GB | 32 GB+ |
+| Core8 + pruned AdaLN16 resident | 21.35 GB | 25.62 GB | 22.86 GB | **32.21 GB** | 0 GB | 48 GB+ |
+| Attention16 + MLP8 + pruned AdaLN16 resident | 28.87 GB | 33.15 GB | 30.31 GB | **39.73 GB** | 0 GB | 64 GB+ |
+| BF16-pruned stream2 | streamed | 7.63 GB | 14.30 GB | **24.70 GB** | 0 GB | 48/64 GB quality mode |
+| Full4 resident with full-width AdaLN8 | 11.45 GB | 26.14 GB | 26.60 GB | **35.43 GB** | 0 GB | 48 GB+ |
+| Full4 stream5 | 1.48 GB active before release | 6.18 GB | 13.61 GB | **25.77 GB** | 0 GB | 32 GB experimental |
+
+The Core4/Core8 process measurements were captured with the older pruned AdaLN8 checkpoints. They
+are conservative proxies for the new AdaLN16 defaults: both variants have the same post-cache DiT
+resident size, while the AdaLN16 checkpoint is about 0.10 GB smaller. The Attention16/MLP8/AdaLN16
+row is a direct measurement of the current 64 GB profile. Full BF16 resident does not yet have a
+complete whole-process peak measurement and is therefore recommended only at 96 GB+.
+
 The setup downloads a pinned six-shard subset of `lmstudio-community/Qwen3-VL-32B-Instruct-MLX-8bit`: embedding plus layers 0-49, exactly the part H3 evaluates. Cross-layer unquantized norm tensors are byte-identical to the MiniMax H3 Qwen checkpoint. The unused final 14 layers, LM head, and seventh shard are not downloaded.
 
 Budget roughly **70 GB free for the default 4-bit setup**, or **105 GB for both transformer profiles**. This includes the 32.13 GB prequantized Qwen8 subset and avoids the roughly 65 GB upstream BF16 text encoder.
