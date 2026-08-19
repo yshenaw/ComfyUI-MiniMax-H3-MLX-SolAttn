@@ -440,14 +440,22 @@ class BigVGANDecoder(nn.Module):
 
     def __call__(self, x: mx.array) -> mx.array:
         x = self.conv_pre(x)
+        mx.eval(x)
         for i in range(self.num_upsamples):
             x = self.ups[i][0](x)
+            mx.eval(x)
             residual = None
             for j in range(self.num_kernels):
                 block = self.resblocks[i * self.num_kernels + j](x)
+                mx.eval(block)
                 residual = block if residual is None else residual + block
+                mx.eval(residual)
             x = residual / self.num_kernels
+            mx.eval(x)
+            del block, residual
+            mx.clear_cache()
         x = self.conv_post(self.activation_post(x))
+        mx.eval(x)
         return mx.clip(x, -1.0, 1.0)
 
 

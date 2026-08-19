@@ -231,26 +231,28 @@ I/O. The remaining slowdown came from per-block reconstruction, materialization,
 collection, and cache clearing. Resident and offset MP4/WAV outputs were byte-for-byte identical.
 
 Offset I/O alone lowered the DiT MLX peak by 10.41 GB but did not lower the whole-process peak. The
-remaining issue was MLX lazy execution in Video VAE: all spatial tiles and temporal clips built one
-large deferred 36-layer ViT graph before materialization. Evaluating and clearing each tile and
-clip immediately keeps the math unchanged while reusing the live activation workspace.
+remaining issue was MLX lazy execution in both VAEs: Video VAE accumulated deferred spatial tiles
+and temporal clips, while Audio VAE accumulated all seven BigVGAN upsample stages. Evaluating and
+clearing each tile, clip, and audio upsample stage immediately keeps the math unchanged while
+reusing the live activation workspace.
 
-An exact `proc_pid_rusage` trace sampled every 0.25 seconds after both changes measured the
-per-stage current footprint and the process lifetime maximum:
+An exact `proc_pid_rusage` trace sampled every 0.25 seconds after offset I/O and eager execution in
+both VAEs measured:
 
-| Stage | Exact physical footprint peak |
-| --- | ---: |
-| Qwen8 25+25 | 14.75 GB |
-| Core4 offset-streamed DiT | 11.79 GB |
-| Video VAE | **15.93 GB** |
-| Audio VAE | 18.06 GB |
-| Final media write, lifetime maximum | **18.84 GB** |
+| Stage | Stream1 peak | Stream2 peak |
+| --- | ---: | ---: |
+| Qwen8 25+25 | 14.74 GB | 14.74 GB |
+| Core4 offset-streamed DiT | 11.78 GB | 12.22 GB |
+| Video VAE | **15.99 GB** | **16.36 GB** |
+| Audio VAE | 7.52 GB | 8.94 GB |
+| Process lifetime maximum | **16.06 GB** | **16.36 GB** |
 
-Apple's 24 GiB configuration provides 25.77 decimal GB of physical memory, leaving about 6.93 GB
-above the measured lifetime maximum. The optimized MP4 and WAV remain byte-for-byte identical to
-resident output. End-to-end pipeline time was 255.34 seconds versus 216.60 seconds resident and
-253.77 seconds offset-only, so eager VAE tiles added 1.57 seconds while reducing the prior 25.76 GB
-Video VAE peak by 9.83 GB.
+Apple's 24 GiB configuration provides 25.77 decimal GB of physical memory. Stream2 leaves about
+9.41 GB above the measured 16.36 GB lifetime maximum and is the better speed/memory balance:
+239.27 seconds end to end versus 257.58 seconds stream1 and 216.60 seconds resident. Both optimized
+outputs remain byte-for-byte identical to resident output. Video VAE eager execution reduced the
+prior 25.76 GB stage peak by 9.77 GB; Audio VAE eager execution reduced its independent decode peak
+from 15.24 GB to 4.94 GB without quantizing either VAE.
 
 An isolated 1280x720 / 124-frame Video VAE decode peaked at 16.40 GB with eager tiles, compared to
 14.01 GB for 864x480. The complete 720p pipeline has not yet been measured, so 24 GB support remains
