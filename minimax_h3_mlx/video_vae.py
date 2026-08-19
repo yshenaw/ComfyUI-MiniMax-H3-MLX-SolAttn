@@ -562,9 +562,14 @@ class VideoVAE(nn.Module):
                     j_pos // ratio : j_pos // ratio + j_len // ratio,
                     :,
                 ]
-                row.append(self.decoder(self.post_quant_conv(tile)))
+                decoded = self.decoder(self.post_quant_conv(tile))
+                mx.eval(decoded)
+                row.append(decoded)
+                mx.clear_cache()
             rows.append(row)
-        return self._stitch_tiles(rows, y_ov, x_ov, 2, 3)
+        stitched = self._stitch_tiles(rows, y_ov, x_ov, 2, 3)
+        mx.eval(stitched)
+        return stitched
 
     # -- public API (channels-first, matching the reference) --------------------------------
 
@@ -627,6 +632,7 @@ class VideoVAE(nn.Module):
         for i in range(num_chunks):
             start = i * chunk_tokens
             clip = self._decode_clip(z[:, start : start + chunk_tokens + self.token_overlap])
+            mx.eval(clip)
             for j in range(int(token_drop > 0) + 1):
                 frame_start = j * chunk_num_frames
                 chunk = clip[:, frame_start : frame_start + chunk_num_frames]
@@ -634,9 +640,12 @@ class VideoVAE(nn.Module):
                 if j == 0:
                     if overlap is not None:
                         chunk = self._blend(overlap, chunk, self.frame_overlap, axis=1)
+                    mx.eval(chunk)
                     decoded.append(chunk)
                 else:
                     overlap = chunk
+            del clip
+            mx.clear_cache()
         if overlap is not None:
             decoded.append(overlap)
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import sys
 from dataclasses import asdict
 from pathlib import Path
@@ -20,9 +21,11 @@ from build_fit32_quant import (
     pad_pruned_adaln_for_int8,
 )
 from build_pruned_quant_low_memory import build
+from minimax_h3_mlx.adaln import ModulationCache
 from minimax_h3_mlx.dit import MiniMaxH3DiT
 from minimax_h3_mlx.load import load_dit
 from minimax_h3_mlx.quantize import quantize_dit
+from minimax_h3_mlx.streaming_dit import StreamingDiT
 from test_dit_smoke import build_packed_layout, tiny_config
 
 
@@ -109,3 +112,30 @@ def test_low_memory_pruned_quant_matches_full_model_recipe(tmp_path, bits, adaln
     mx.eval(expected_video, expected_audio, actual_video, actual_audio)
     assert mx.array_equal(actual_video, expected_video).item()
     assert mx.array_equal(actual_audio, expected_audio).item()
+
+    if bits == 4 and adaln_bits == 16:
+        streamed = tmp_path / "stream1"
+        script = ROOT / "scripts" / "build_streaming_checkpoint.py"
+        subprocess.run(
+            [
+                sys.executable,
+                str(script),
+                "--source", str(output),
+                "--out", str(streamed),
+                "--chunk-size", "1",
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        resident_cache = ModulationCache.build(actual, args[3], dtype=mx.bfloat16)
+        expected_video, expected_audio = actual(*args, modulation_cache=resident_cache)
+        streaming = StreamingDiT(streamed, core_io="offset", verbose=False)
+        streaming_cache = streaming.build_modulation_cache(args[3])
+        actual_video, actual_audio = streaming(*args, modulation_cache=streaming_cache)
+        mx.eval(expected_video, expected_audio, actual_video, actual_audio)
+
+        assert streaming.summary()["core_io"] == "offset"
+        assert streaming.summary()["chunk_size"] == 1
+        assert mx.array_equal(actual_video, expected_video).item()
+        assert mx.array_equal(actual_audio, expected_audio).item()

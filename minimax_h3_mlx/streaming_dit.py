@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import gc
 import json
+import os
 import time
+from concurrent.futures import Future, ThreadPoolExecutor
 from pathlib import Path
 
 import mlx.core as mx
@@ -15,6 +17,7 @@ from .adaln import ModulationCache
 from .config import MODALITY_NUM, DiTConfig
 from .dit import AdaLayerNormModulation, MiniMaxH3DiT, TransformerBlock, param_dtype
 from .lora import CurveLoRALinear, LoRALinear, _linear_input_dim
+from .offset_io import RawParts, raw_parts_to_mlx, read_safetensors_parts
 from .quantize import QuantConfig, apply_quantization_structure
 from .streaming_layout import load_manifest
 
@@ -101,6 +104,7 @@ class StreamingDiT:
         *,
         lora_path: str | Path | None = None,
         lora_strength: float = 1.0,
+        core_io: str | None = None,
         verbose: bool = True,
     ):
         self.model_dir = Path(model_dir)
@@ -129,9 +133,17 @@ class StreamingDiT:
                 },
             )
         self.verbose = bool(verbose)
+        self.core_io = core_io or os.environ.get("MINIMAX_H3_STREAM_IO", "mlx")
+        if self.core_io not in ("mlx", "offset"):
+            raise ValueError(f"Unsupported streaming core I/O mode: {self.core_io!r}.")
         self.attention_backend = None
         self.core_load_seconds = 0.0
+        self.core_pread_seconds = 0.0
+        self.core_wait_seconds = 0.0
+        self.core_convert_seconds = 0.0
         self.core_bytes_read = 0
+        self.core_file_bytes_read = 0
+        self.core_nocache_files = 0
         self.adaln_load_seconds = 0.0
         self.adaln_bytes_read = 0
         self.chunk_loads = 0
@@ -285,28 +297,73 @@ class StreamingDiT:
         adaln_indices = timestep_indices * MODALITY_NUM + mx.maximum(token_tags, 0)
         first_input = x if first_block_cache is not None else None
         cache_hit = False
-        for chunk in self.manifest["chunks"]:
-            started = time.perf_counter()
-            weights = _load_parts(self.model_dir, chunk["core_files"])
-            self.core_load_seconds += time.perf_counter() - started
-            self.core_bytes_read += int(chunk["core_bytes"])
-            self.chunk_loads += 1
-            for block_index in range(int(chunk["start"]), int(chunk["end"])):
-                block = self._new_block(block_index, weights)
-                x = block(x, modulation_cache.get(block_index), adaln_indices, rotary, mask)
-                mx.eval(x)
-                del block
-                if block_index == 0 and first_block_cache is not None:
-                    cached = first_block_cache.after_first_block(first_input, x)
-                    if cached is not None:
-                        x = cached
-                        cache_hit = True
-                        break
-            del weights
-            gc.collect()
-            mx.clear_cache()
-            if cache_hit:
-                break
+        chunks = self.manifest["chunks"]
+        executor = None
+        future: Future[RawParts] | None = None
+        if self.core_io == "offset" and chunks:
+            executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="h3-offset-prefetch")
+            future = executor.submit(
+                read_safetensors_parts,
+                self.model_dir,
+                chunks[0]["core_files"],
+                nocache=True,
+            )
+        try:
+            for chunk_index, chunk in enumerate(chunks):
+                delay_prefetch = chunk_index == 0 and first_block_cache is not None
+                if future is None:
+                    started = time.perf_counter()
+                    weights = _load_parts(self.model_dir, chunk["core_files"])
+                    self.core_load_seconds += time.perf_counter() - started
+                else:
+                    started = time.perf_counter()
+                    raw = future.result()
+                    self.core_wait_seconds += time.perf_counter() - started
+                    self.core_pread_seconds += raw.read_seconds
+                    self.core_file_bytes_read += raw.bytes_read
+                    self.core_nocache_files += raw.nocache_files
+                    if not delay_prefetch and chunk_index + 1 < len(chunks):
+                        future = executor.submit(
+                            read_safetensors_parts,
+                            self.model_dir,
+                            chunks[chunk_index + 1]["core_files"],
+                            nocache=True,
+                        )
+                    else:
+                        future = None
+                    started = time.perf_counter()
+                    weights = raw_parts_to_mlx(raw)
+                    self.core_convert_seconds += time.perf_counter() - started
+                    self.core_load_seconds = self.core_wait_seconds + self.core_convert_seconds
+                    del raw
+                self.core_bytes_read += int(chunk["core_bytes"])
+                self.chunk_loads += 1
+                for block_index in range(int(chunk["start"]), int(chunk["end"])):
+                    block = self._new_block(block_index, weights)
+                    x = block(x, modulation_cache.get(block_index), adaln_indices, rotary, mask)
+                    mx.eval(x)
+                    del block
+                    if block_index == 0 and first_block_cache is not None:
+                        cached = first_block_cache.after_first_block(first_input, x)
+                        if cached is not None:
+                            x = cached
+                            cache_hit = True
+                            break
+                del weights
+                gc.collect()
+                mx.clear_cache()
+                if cache_hit:
+                    break
+                if delay_prefetch and chunk_index + 1 < len(chunks):
+                    future = executor.submit(
+                        read_safetensors_parts,
+                        self.model_dir,
+                        chunks[chunk_index + 1]["core_files"],
+                        nocache=True,
+                    )
+        finally:
+            if executor is not None:
+                executor.shutdown(wait=True, cancel_futures=True)
 
         if first_block_cache is not None and not cache_hit:
             first_block_cache.finish_full_step(x)
@@ -322,9 +379,15 @@ class StreamingDiT:
             "quantized": self.quant_config is not None,
             "adaln_curve_dim": self.curve_dim,
             "chunk_size": self.manifest["chunk_size"],
+            "core_io": self.core_io,
             "chunk_loads": self.chunk_loads,
             "core_gb_read": self.core_bytes_read / 1e9,
             "core_load_seconds": self.core_load_seconds,
+            "core_pread_seconds": self.core_pread_seconds,
+            "core_wait_seconds": self.core_wait_seconds,
+            "core_convert_seconds": self.core_convert_seconds,
+            "core_file_gb_read": self.core_file_bytes_read / 1e9,
+            "core_nocache_files": self.core_nocache_files,
             "adaln_gb_read": self.adaln_bytes_read / 1e9,
             "adaln_load_seconds": self.adaln_load_seconds,
         }

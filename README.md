@@ -204,6 +204,58 @@ The repaired BF16-pruned stream2 profile was measured with prequantized Qwen8, T
 
 The corrected resident and stream2 videos both contain the expected moving sports car and neon city. Audio waveform correlation between them was 0.906. Timings are from the 80-core M3 Ultra test machine; 48/64 GB systems should treat BF16 stream2 as a quality-first, SSD-intensive mode.
 
+### Experimental offset I/O
+
+Set `MINIMAX_H3_STREAM_IO=offset` to replace core-chunk `mx.load()` calls with direct
+safetensors `pread`, best-effort macOS `F_NOCACHE`, and one-chunk lookahead prefetch. The default
+remains `mx.load`. This mode is intended for memory experiments, not as the release default.
+
+The minimal Core4 + pruned AdaLN16 prototype used one block per chunk at 864x480, 124 frames,
+Turbo4, Qwen8, and Sol-Attn:
+
+The first table comes from the smoke runner's one-second RSS/`top` sampling and is useful for
+comparing the resident and offset runs under the same monitor:
+
+| Metric | Resident | Offset stream1 |
+| --- | ---: | ---: |
+| Denoise MLX peak | 15.60 GB | **5.19 GB** |
+| Process RSS peak | 14.38 GB | **13.51 GB** |
+| Process footprint peak | **23.62 GB** | 24.70 GB |
+| Denoise | **151.62 s** | 188.99 s |
+| Wall time | **219.30 s** | 256.61 s |
+| Swap growth | 0 GB | 0 GB |
+
+Offset mode read 43.36 GB across 200 block loads. The background reader spent 9.20 seconds in
+`pread`, but the foreground waited only 0.15 seconds; prefetch therefore hid almost all physical
+I/O. The remaining slowdown came from per-block reconstruction, materialization, garbage
+collection, and cache clearing. Resident and offset MP4/WAV outputs were byte-for-byte identical.
+
+Offset I/O alone lowered the DiT MLX peak by 10.41 GB but did not lower the whole-process peak. The
+remaining issue was MLX lazy execution in Video VAE: all spatial tiles and temporal clips built one
+large deferred 36-layer ViT graph before materialization. Evaluating and clearing each tile and
+clip immediately keeps the math unchanged while reusing the live activation workspace.
+
+An exact `proc_pid_rusage` trace sampled every 0.25 seconds after both changes measured the
+per-stage current footprint and the process lifetime maximum:
+
+| Stage | Exact physical footprint peak |
+| --- | ---: |
+| Qwen8 25+25 | 14.75 GB |
+| Core4 offset-streamed DiT | 11.79 GB |
+| Video VAE | **15.93 GB** |
+| Audio VAE | 18.06 GB |
+| Final media write, lifetime maximum | **18.84 GB** |
+
+Apple's 24 GiB configuration provides 25.77 decimal GB of physical memory, leaving about 6.93 GB
+above the measured lifetime maximum. The optimized MP4 and WAV remain byte-for-byte identical to
+resident output. End-to-end pipeline time was 255.34 seconds versus 216.60 seconds resident and
+253.77 seconds offset-only, so eager VAE tiles added 1.57 seconds while reducing the prior 25.76 GB
+Video VAE peak by 9.83 GB.
+
+An isolated 1280x720 / 124-frame Video VAE decode peaked at 16.40 GB with eager tiles, compared to
+14.01 GB for 864x480. The complete 720p pipeline has not yet been measured, so 24 GB support remains
+an experimental 480p Turbo4 tier.
+
 ## Command-line generation
 
 The same staged backend can run outside ComfyUI:
