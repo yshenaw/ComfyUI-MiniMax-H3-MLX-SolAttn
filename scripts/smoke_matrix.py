@@ -30,7 +30,7 @@ def build_cases() -> list[SmokeCase]:
     cases = []
     for dit_variant in ("bf16", "8bit"):
         for resolution, width, height in (("480p", 864, 480), ("720p", 1280, 720)):
-            for label, sigma_points in (("turbo4", 5), ("turbo6", 7)):
+            for label, sigma_points in (("turbo4", 5), ("turbo8", 9)):
                 for sol_attn in (True, False):
                     cases.append(
                         SmokeCase(

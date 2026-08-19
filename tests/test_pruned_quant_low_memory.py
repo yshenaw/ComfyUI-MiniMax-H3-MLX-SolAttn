@@ -13,7 +13,9 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
 from build_fit32_quant import (
+    full4_pruned_adaln16_quant_config,
     full4_pruned_adaln8_quant_config,
+    full8_pruned_adaln16_quant_config,
     full8_pruned_adaln8_quant_config,
     pad_pruned_adaln_for_int8,
 )
@@ -35,11 +37,12 @@ def _separate_qkv(value: mx.array, config) -> mx.array:
 
 
 @pytest.mark.parametrize("bits", [4, 8])
-def test_low_memory_pruned_quant_matches_full_model_recipe(tmp_path, bits):
+@pytest.mark.parametrize("adaln_bits", [8, 16])
+def test_low_memory_pruned_quant_matches_full_model_recipe(tmp_path, bits, adaln_bits):
     config = tiny_config()
     config.ffn_hidden_size = 64
     source = tmp_path / "source"
-    output = tmp_path / f"output-{bits}"
+    output = tmp_path / f"output-{bits}-adaln{adaln_bits}"
     source.mkdir()
     (source / "config.json").write_text(json.dumps(asdict(config)))
 
@@ -59,22 +62,31 @@ def test_low_memory_pruned_quant_matches_full_model_recipe(tmp_path, bits):
     )
 
     expected = load_dit(source)
-    paths = pad_pruned_adaln_for_int8(expected)
-    quant_config = (
-        full4_pruned_adaln8_quant_config(paths)
-        if bits == 4
-        else full8_pruned_adaln8_quant_config(paths)
-    )
+    if adaln_bits == 8:
+        paths = pad_pruned_adaln_for_int8(expected)
+        quant_config = (
+            full4_pruned_adaln8_quant_config(paths)
+            if bits == 4
+            else full8_pruned_adaln8_quant_config(paths)
+        )
+    else:
+        quant_config = (
+            full4_pruned_adaln16_quant_config()
+            if bits == 4
+            else full8_pruned_adaln16_quant_config()
+        )
     quantize_dit(expected, quant_config)
     mx.eval(expected.parameters())
 
-    metadata = build(source, output, bits)
+    metadata = build(source, output, bits, adaln_bits)
     actual = load_dit(output)
     mx.eval(actual.parameters())
 
     expected_weights = dict(tree_flatten(expected.parameters()))
     actual_weights = dict(tree_flatten(actual.parameters()))
     assert metadata["qkv_layout"] == "interleaved"
+    assert metadata["quantize_adaln"] is (adaln_bits == 8)
+    assert metadata["adaln_bits"] == (8 if adaln_bits == 8 else None)
     assert metadata["adaln_bytes"] > 0
     assert metadata["resident_bytes_after_adaln_drop"] < metadata["total_bytes"]
     assert expected_weights.keys() == actual_weights.keys()

@@ -28,6 +28,10 @@ TRANSFORMER_REPOS = {
     "bf16-pruned": "Comfy-Org/MiniMax-H3",
     "4-bit-pruned": "local:bf16-pruned",
     "8-bit-pruned": "local:bf16-pruned",
+    "attention16-mlp8-pruned": "local:bf16-pruned",
+}
+SETUP_PROFILE_ALIASES = {
+    "attention16-mlp8-pruned": "attention16-mlp8",
 }
 TURBO_REPO = "larryvrh/MiniMax-H3-Turbo-Lora"
 TURBO_FILENAME = "minimax_h3_turbo_4step_ema_ckpt850.safetensors"
@@ -92,7 +96,13 @@ def missing_model_files(paths: ModelPaths) -> list[Path]:
         paths.transformer / "config.json",
         paths.lora,
     ]
-    if paths.profile in ("4-bit", "8-bit", "4-bit-pruned", "8-bit-pruned"):
+    if paths.profile in (
+        "4-bit",
+        "8-bit",
+        "4-bit-pruned",
+        "8-bit-pruned",
+        "attention16-mlp8-pruned",
+    ):
         required.extend(
             (
                 paths.transformer / "model.safetensors.index.json",
@@ -118,10 +128,11 @@ def require_models(profile: str, models_dir: str | Path | None = None) -> ModelP
     missing = missing_model_files(paths)
     if missing:
         setup = Path(__file__).resolve().parents[1] / "scripts" / "setup_comfyui.py"
+        setup_profile = SETUP_PROFILE_ALIASES.get(profile, profile.replace("-bit", ""))
         details = "\n".join(f"  - {path}" for path in missing)
         raise FileNotFoundError(
             f"MiniMax H3 {profile} model setup is incomplete:\n{details}\n"
-            f"Run: python {setup} --profile {profile.replace('-bit', '')}"
+            f"Run: python {setup} --profile {setup_profile}"
         )
     return paths
 

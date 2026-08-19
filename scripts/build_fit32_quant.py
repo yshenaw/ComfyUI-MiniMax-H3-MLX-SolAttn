@@ -1,4 +1,4 @@
-"""Build the Fit32 DiT: 8-bit attention, 4-bit MLP, pruned 16-bit AdaLN."""
+"""Build pruned mixed-precision DiT profiles for memory-tier evaluation."""
 
 from __future__ import annotations
 
@@ -45,6 +45,26 @@ def attention16_mlp4_quant_config(model, group_size: int = 64) -> QuantConfig:
         group_size=group_size,
         quantize_adaln=False,
         overrides=overrides,
+    )
+
+
+def attention16_mlp8_quant_config(
+    model,
+    group_size: int = 64,
+    adaln_paths: list[str] | None = None,
+) -> QuantConfig:
+    overrides = {
+        path: None
+        for path, _module in model.named_modules()
+        if path.endswith((".attn.qkv_proj", ".attn.out_proj"))
+    }
+    return QuantConfig(
+        bits=8,
+        group_size=group_size,
+        quantize_adaln=adaln_paths is not None,
+        adaln_bits=8,
+        overrides=overrides,
+        group_overrides={path: 32 for path in adaln_paths or ()},
     )
 
 
@@ -139,6 +159,8 @@ def main() -> int:
         choices=[
             "fit32",
             "attention16-mlp4",
+            "attention16-mlp8-adaln8",
+            "attention16-mlp8-adaln16",
             "attention8-mlp6",
             "full4-pruned-adaln16",
             "full4-pruned-adaln8",
@@ -169,6 +191,19 @@ def main() -> int:
         expected_counts = {4: 104}
         recipe_name = "qkv_out_16bit_mlp_4bit_pruned_adaln_16bit"
         description = "16-bit QKV/out projections and 4-bit MLP projections"
+    elif args.recipe == "attention16-mlp8-adaln16":
+        config = attention16_mlp8_quant_config(model, args.group_size)
+        expected_counts = {8: 104}
+        recipe_name = "qkv_out_16bit_mlp_8bit_pruned_adaln_16bit"
+        description = "16-bit QKV/out projections and 8-bit MLP projections"
+    elif args.recipe == "attention16-mlp8-adaln8":
+        adaln_paths = pad_pruned_adaln_for_int8(model)
+        config = attention16_mlp8_quant_config(model, args.group_size, adaln_paths)
+        expected_counts = {8: 154}
+        recipe_name = "qkv_out_16bit_mlp_8bit_pruned_rank8_adaln_8bit_group32"
+        description = (
+            "16-bit QKV/out projections, 8-bit MLP projections, and pruned 8-bit AdaLN"
+        )
     elif args.recipe == "attention8-mlp6":
         config = attention8_mlp6_quant_config(model, args.group_size)
         expected_counts = {6: 104, 8: 104}
@@ -229,11 +264,16 @@ def main() -> int:
     with open(out / "quant_config.json", "w") as handle:
         json.dump(metadata, handle, indent=2)
     with open(out / "README.md", "w") as handle:
+        adaln_description = (
+            "pruned 8-bit curve AdaLN"
+            if config.quantize_adaln
+            else "source pruned 16-bit curve AdaLN"
+        )
         handle.write(
             "# MiniMax-H3 MLX Fit32\n\n"
             "> Powered by MiniMax H3.\n\n"
-            f"{description}, and the source "
-            "pruned 16-bit curve AdaLN. Activations and the precomputed modulation "
+            f"{description}, and {adaln_description}. "
+            "Activations and the precomputed modulation "
             "cache remain BF16. See `quant_config.json` for the exact recipe.\n"
         )
 

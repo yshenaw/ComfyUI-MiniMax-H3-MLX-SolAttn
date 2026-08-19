@@ -75,11 +75,11 @@ def _pad_projection(projection, padded_dim: int = 32) -> None:
     projection.linear = target
 
 
-def _quantize_block(block: TransformerBlock, bits: int) -> None:
+def _quantize_block(block: TransformerBlock, bits: int, adaln_bits: int) -> None:
     def predicate(path, module):
         if not isinstance(module, nn.Linear):
             return False
-        if path == "adaln_proj.linear":
+        if path == "adaln_proj.linear" and adaln_bits == 8:
             return {"group_size": 32, "bits": 8}
         if path in CORE_PATHS:
             return {"group_size": 64, "bits": bits}
@@ -114,7 +114,14 @@ def _save_part(
     return sum(value.nbytes for value in tensors.values())
 
 
-def build(source: Path, output: Path, bits: int) -> dict[str, object]:
+def build(
+    source: Path,
+    output: Path,
+    bits: int,
+    adaln_bits: int = 16,
+) -> dict[str, object]:
+    if adaln_bits not in (8, 16):
+        raise ValueError(f"AdaLN bits must be 8 or 16, got {adaln_bits}.")
     if output.exists() and any(output.iterdir()):
         raise FileExistsError(f"Output directory is not empty: {output}")
     config = DiTConfig.from_json(source / "config.json")
@@ -135,8 +142,9 @@ def build(source: Path, output: Path, bits: int) -> dict[str, object]:
     fixed_keys = sorted(key for key in locations if not key.startswith("blocks.") and key not in SKIP_KEYS)
     fixed_weights = _read_weights(fixed_keys, locations, config)
     _update(fixed, fixed_weights)
-    fixed.adaln_t_table = mx.pad(fixed.adaln_t_table, ((0, 0), (0, 24)))
-    _pad_projection(fixed.final_layer.adaln_proj)
+    if adaln_bits == 8:
+        fixed.adaln_t_table = mx.pad(fixed.adaln_t_table, ((0, 0), (0, 24)))
+        _pad_projection(fixed.final_layer.adaln_proj)
     _quantize_fixed(fixed, bits)
     fixed_tensors = dict(tree_flatten(fixed.parameters()))
     total_bytes += _save_part(output, "model-fixed.safetensors", fixed_tensors, weight_map)
@@ -150,8 +158,9 @@ def build(source: Path, output: Path, bits: int) -> dict[str, object]:
         weights = _read_weights(keys, locations, config)
         block = TransformerBlock(config, curve_dim=8)
         _update(block, weights, prefix)
-        _pad_projection(block.adaln_proj)
-        _quantize_block(block, bits)
+        if adaln_bits == 8:
+            _pad_projection(block.adaln_proj)
+        _quantize_block(block, bits, adaln_bits)
         tensors = {f"blocks.{block_index}.{key}": value for key, value in tree_flatten(block.parameters())}
         adaln_bytes += sum(
             value.nbytes for key, value in tensors.items() if ".adaln_proj." in key
@@ -168,26 +177,28 @@ def build(source: Path, output: Path, bits: int) -> dict[str, object]:
         print(f"  block {block_index + 1}/{config.num_layers}", flush=True)
 
     core_count = 4 * (config.num_layers + config.token_refiner_num_layers)
-    counts = {"8": core_count + config.num_layers} if bits == 8 else {
-        "4": core_count,
-        "8": config.num_layers,
-    }
+    counts = {str(bits): core_count}
+    if adaln_bits == 8:
+        counts["8"] = counts.get("8", 0) + config.num_layers
+    quantize_adaln = adaln_bits == 8
     metadata = {
         "bits": bits,
         "group_size": 64,
-        "quantize_adaln": True,
-        "adaln_bits": 8,
+        "quantize_adaln": quantize_adaln,
+        "adaln_bits": 8 if quantize_adaln else None,
         "overrides": {},
-        "group_overrides": {
-            f"blocks.{index}.adaln_proj.linear": 32 for index in range(config.num_layers)
-        },
+        "group_overrides": (
+            {f"blocks.{index}.adaln_proj.linear": 32 for index in range(config.num_layers)}
+            if quantize_adaln
+            else {}
+        ),
         "quantized_layers": counts,
         "total_bytes": total_bytes,
         "adaln_bytes": adaln_bytes,
         "resident_bytes_after_adaln_drop": total_bytes - adaln_bytes,
         "gb_on_disk": round(total_bytes / 1e9, 2),
         "gb_resident_after_adaln_drop": round((total_bytes - adaln_bytes) / 1e9, 2),
-        "recipe": f"full_core_{bits}bit_pruned_rank8_adaln_8bit_group32",
+        "recipe": f"full_core_{bits}bit_pruned_adaln_{adaln_bits}bit",
         "qkv_layout": "interleaved",
     }
     (output / "quant_config.json").write_text(json.dumps(metadata, indent=2) + "\n")
@@ -198,7 +209,7 @@ def build(source: Path, output: Path, bits: int) -> dict[str, object]:
         f"# MiniMax-H3 MLX {bits}-bit pruned\n\n"
         "> Powered by MiniMax H3.\n\n"
         "Blockwise low-memory conversion from the official pruned BF16 checkpoint. "
-        "The core is quantized, rank-8 AdaLN is padded and quantized to 8-bit group 32, "
+        f"The core is quantized and rank-8 AdaLN stays at {adaln_bits}-bit, "
         "and QKV rows are stored in MLX per-head-interleaved order.\n"
     )
     return metadata
@@ -209,8 +220,14 @@ def main() -> int:
     parser.add_argument("--source", required=True)
     parser.add_argument("--out", required=True)
     parser.add_argument("--bits", type=int, choices=[4, 8], required=True)
+    parser.add_argument("--adaln-bits", type=int, choices=[8, 16], default=16)
     args = parser.parse_args()
-    metadata = build(Path(args.source).expanduser().resolve(), Path(args.out).expanduser().resolve(), args.bits)
+    metadata = build(
+        Path(args.source).expanduser().resolve(),
+        Path(args.out).expanduser().resolve(),
+        args.bits,
+        args.adaln_bits,
+    )
     print(json.dumps(metadata, indent=2), flush=True)
     return 0
 

@@ -16,10 +16,24 @@ else:
 PACKAGE_ROOT = Path(__file__).resolve().parent
 
 PRESETS = {
-    "Turbo 4 Fast": {"steps": 5, "turbo": True, "fbc": "none"},
-    "Turbo 6 Balanced": {"steps": 7, "turbo": True, "fbc": "none"},
-    "Quality 20": {"steps": 21, "turbo": False, "fbc": "safe"},
+    "Turbo 4 Fast": {"steps": 5, "turbo": True},
+    "Turbo 8 Balanced": {"steps": 9, "turbo": True},
+    "Full 20 Quality": {"steps": 21, "turbo": False},
 }
+
+
+def _first_block_cache(preset: dict[str, object], enabled: bool) -> str:
+    return "safe" if enabled and not preset["turbo"] else "none"
+
+
+def _memory_mode(profile: str, requested: str, physical_gb: float) -> str:
+    if requested != "auto":
+        return requested
+    if profile == "bf16":
+        return "resident" if physical_gb >= 96.0 else "stream2"
+    if profile == "bf16-pruned":
+        return "resident" if physical_gb >= 96.0 else "stream2"
+    return "resident"
 
 
 def _comfy_outputs(result):
@@ -53,7 +67,7 @@ class MiniMaxH3MLXGenerate:
                     list(TRANSFORMER_REPOS),
                     {
                         "default": "4-bit",
-                        "tooltip": "4/8-bit are fast resident tiers; BF16 stream2 is the 48/64 GB high-quality slow tier.",
+                        "tooltip": "Pruned Core4/Core8/Attention16-MLP8 are the 32/48/64 GB resident tiers.",
                     },
                 ),
                 "generation_profile": (list(PRESETS), {"default": "Turbo 4 Fast"}),
@@ -85,6 +99,13 @@ class MiniMaxH3MLXGenerate:
                     "FLOAT",
                     {"default": 1.3, "min": 0.0, "max": 4.0, "step": 0.05},
                 ),
+                "full20_fbc": (
+                    "BOOLEAN",
+                    {
+                        "default": True,
+                        "tooltip": "Use Safe First Block Cache for Full 20; Turbo modes ignore this setting.",
+                    },
+                ),
             },
         }
 
@@ -111,6 +132,7 @@ class MiniMaxH3MLXGenerate:
         duration_seconds,
         seed,
         sol_tau=1.3,
+        full20_fbc=True,
     ):
         if width % 32 or height % 32:
             raise ValueError("MiniMax H3 width and height must be multiples of 32.")
@@ -120,11 +142,7 @@ class MiniMaxH3MLXGenerate:
         import os
 
         physical_gb = os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES") / 1e9
-        if memory_mode == "auto":
-            if model_profile == "bf16":
-                memory_mode = "stream2" if physical_gb < 96.0 else "resident"
-            else:
-                memory_mode = "stream5" if physical_gb < 40.0 else "resident"
+        memory_mode = _memory_mode(model_profile, memory_mode, physical_gb)
         qwen_stages = 2 if physical_gb < 40.0 else 1
         transformer = {
             "resident": paths.transformer,
@@ -166,7 +184,7 @@ class MiniMaxH3MLXGenerate:
             qwen_dir=paths.qwen,
             qwen_bits=None,
             qwen_stages=qwen_stages,
-            first_block_cache=preset["fbc"],
+            first_block_cache=_first_block_cache(preset, full20_fbc),
             attention_backend=backend,
             verbose=True,
         )

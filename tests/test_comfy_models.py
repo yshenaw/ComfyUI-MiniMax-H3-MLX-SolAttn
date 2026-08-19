@@ -38,6 +38,18 @@ def test_pruned_quant_profiles_have_distinct_resident_paths(tmp_path, profile):
     assert paths.streaming_transformer_2.name == f"{profile}-stream2"
 
 
+def test_attention16_mlp8_profile_has_a_distinct_resident_path(tmp_path):
+    paths = model_paths("attention16-mlp8-pruned", tmp_path)
+
+    assert paths.transformer.name == "attention16-mlp8-pruned"
+    assert paths.streaming_transformer_2.name == "attention16-mlp8-pruned-stream2"
+
+
+def test_attention16_mlp8_missing_files_suggest_valid_setup_alias(tmp_path):
+    with pytest.raises(FileNotFoundError, match=r"--profile attention16-mlp8$"):
+        require_models("attention16-mlp8-pruned", tmp_path)
+
+
 def test_model_validation_reports_and_accepts_expected_layout(tmp_path):
     paths = model_paths("4-bit", tmp_path)
     missing = missing_model_files(paths)

@@ -12,12 +12,13 @@ The node supports quantized fast profiles and BF16 quality profiles. Setup downl
 | --- | ---: | ---: | --- |
 | 4-bit core + 8-bit full AdaLN | about 25.3 GB | 11.45 GB | Recommended default; lower memory and faster linear layers |
 | 8-bit core + 8-bit full AdaLN | about 35.3 GB | 21.47 GB | Higher fidelity; 64 GB+ recommended |
-| 4-bit core + pruned 8-bit AdaLN | about 11.5 GB | 11.33 GB | 32 GB resident default |
-| 8-bit core + pruned 8-bit AdaLN | about 21.5 GB | 21.35 GB | 48 GB resident default |
+| 4-bit core + pruned 16-bit AdaLN | about 11.4 GB | 11.33 GB | 32 GB resident default |
+| 8-bit core + pruned 16-bit AdaLN | about 21.4 GB | 21.35 GB | 48 GB resident default |
+| 16-bit attention + 8-bit MLP + pruned 16-bit AdaLN | about 29.0 GB | 28.87 GB | 64 GB resident default |
 | BF16 core + rank-8 pruned AdaLN | about 40.2 GB | 40.2 GB | 48/64 GB high-quality stream2 tier |
 | BF16 core + full-width AdaLN | about 66.3 GB | 40.3 GB | 96 GB+ full-quality tier |
 
-The published 4/8-bit profiles keep AdaLN full-width at 8-bit. The BF16-pruned profile uses the official rank-8 curve checkpoint. Comfy checkpoints store QKV rows as `[Q][K][V]`; the MLX repacker converts them to the per-head interleaved layout expected by this runtime. Before that conversion was added, incorrect QKV rows produced gray output that was mistakenly attributed to pruned AdaLN. Corrected BF16-pruned resident and stream2 runs both generate normal video and audio.
+The published 4/8-bit profiles keep AdaLN full-width at 8-bit. Locally built pruned profiles use the official rank-8 curve checkpoint and keep that small AdaLN at 16-bit; padding rank 8 to group size 32 made an 8-bit build slightly larger without reducing resident memory. Comfy checkpoints store QKV rows as `[Q][K][V]`; the MLX repacker converts them to the per-head interleaved layout expected by this runtime.
 
 The setup downloads a pinned six-shard subset of `lmstudio-community/Qwen3-VL-32B-Instruct-MLX-8bit`: embedding plus layers 0-49, exactly the part H3 evaluates. Cross-layer unquantized norm tensors are byte-identical to the MiniMax H3 Qwen checkpoint. The unused final 14 layers, LM head, and seventh shard are not downloaded.
 
@@ -65,7 +66,10 @@ python3 scripts/setup_comfyui.py --profile bf16-pruned
 python3 scripts/setup_comfyui.py --profile 4-pruned
 python3 scripts/setup_comfyui.py --profile 8-pruned
 
-# Install both transformer profiles
+# Build the 64 GB resident profile: 16-bit attention, 8-bit MLP, pruned 16-bit AdaLN
+python3 scripts/setup_comfyui.py --profile attention16-mlp8
+
+# Install every supported transformer profile
 python3 scripts/setup_comfyui.py --profile all
 
 # Non-interactive license confirmation for automation
@@ -74,7 +78,7 @@ python3 scripts/setup_comfyui.py --profile 4 --accept-license
 
 For unusual ComfyUI layouts, pass `--models-dir /path/to/ComfyUI/models` or set `MINIMAX_H3_MODELS_DIR` before starting ComfyUI.
 
-The pruned quant profiles are never downloaded as third-party converted weights. Setup downloads the official BF16-pruned checkpoint and converts one block at a time. Measured converter peak RSS was 3.43 GB; Full4-pruned took 65 seconds and Full8-pruned 94 seconds on the M3 Ultra test system.
+The pruned quant profiles are never downloaded as third-party converted weights. Setup downloads the official BF16-pruned checkpoint and builds them locally. The Core4/Core8 converter works one block at a time; its measured peak RSS was 3.43 GB, with build times of 65 and 94 seconds on the M3 Ultra test system. The Attention16/MLP8 converter loads the pruned source as one model and is intended for 64 GB+ systems.
 
 ## Use
 
@@ -98,10 +102,12 @@ The same node exposes three workflow presets:
 | Preset | Forwards | Turbo LoRA | FBC | Sol-Attn default |
 | --- | ---: | --- | --- | --- |
 | Turbo 4 Fast | 4 | on | off | on |
-| Turbo 6 Balanced | 6 | on | off | on |
-| Quality 20 | 20 | off | safe | on |
+| Turbo 8 Balanced | 8 | on | off | on |
+| Full 20 Quality | 20 | off | optional, on | on |
 
-`memory_mode=auto` uses five-block streaming below 40 GB and resident DiT weights otherwise. Prequantized Qwen8 uses 25+25 stages in the streaming tier and a single 50-layer stage in resident tiers.
+Sol-Attn is optional and enabled by default for every preset. Full 20 exposes Safe First Block Cache as a separate option and enables it by default; Turbo modes ignore the FBC setting. Turbo8 is available as a balanced preset but has not yet completed the same perceptual validation as Turbo4.
+
+`memory_mode=auto` keeps quantized and mixed resident profiles resident. BF16-pruned and full BF16 use stream2 below 96 GB. Prequantized Qwen8 uses 25+25 stages below 40 GB and a single 50-layer stage otherwise.
 
 ## Measured result
 
@@ -132,7 +138,7 @@ python3 scripts/build_streaming_checkpoint.py \
   --chunk-size 5
 ```
 
-Pass the resulting directory as `--transformer`. The staged runner detects `streaming_manifest.json` automatically. Streaming supports the same Safe First Block Cache used by Quality20.
+Pass the resulting directory as `--transformer`. The staged runner detects `streaming_manifest.json` automatically. Streaming supports the same Safe First Block Cache used by Full 20.
 
 Measured on the same 80-core M3 Ultra at 864x480, five seconds, Qwen8, Turbo4, and tiled Metal Sol-Attn:
 

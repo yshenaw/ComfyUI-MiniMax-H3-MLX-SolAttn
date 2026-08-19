@@ -21,5 +21,6 @@ def test_workflow_is_self_contained_and_uses_recommended_profile():
         "prequantized 8-bit",
         "sol_attn",
     ]
+    assert generator["widgets_values"][-2:] == [1.3, True]
     assert {"CreateVideo", "SaveVideo", "SaveAudio"}.issubset(nodes)
     assert len(data["links"]) == 4

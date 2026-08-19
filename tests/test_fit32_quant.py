@@ -14,6 +14,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 
 from build_fit32_quant import (
     attention16_mlp4_quant_config,
+    attention16_mlp8_quant_config,
     attention8_mlp6_quant_config,
     fit32_quant_config,
     full4_pruned_adaln8_quant_config,
@@ -68,6 +69,46 @@ def test_attention16_mlp4_keeps_attention_and_adaln_float():
         assert isinstance(block.mlp.fc2, nn.QuantizedLinear)
         assert block.mlp.fc2.bits == 4
     assert isinstance(model.blocks[0].adaln_proj.linear, nn.Linear)
+
+
+def test_attention16_mlp8_keeps_attention_and_adaln_float():
+    model_config = tiny_config()
+    model_config.ffn_hidden_size = 64
+    model = MiniMaxH3DiT(model_config, adaln_curve_grid=5, adaln_curve_dim=8)
+    config = attention16_mlp8_quant_config(model)
+    summary = quantize_dit(model, config)
+
+    assert summary["quantized_layers"] == {8: 8}
+    for block in [*model.token_refiner.blocks, *model.blocks]:
+        assert isinstance(block.attn.qkv_proj, nn.Linear)
+        assert isinstance(block.attn.out_proj, nn.Linear)
+        assert isinstance(block.mlp.fc1, nn.QuantizedLinear)
+        assert block.mlp.fc1.bits == 8
+        assert isinstance(block.mlp.fc2, nn.QuantizedLinear)
+        assert block.mlp.fc2.bits == 8
+    assert isinstance(model.blocks[0].adaln_proj.linear, nn.Linear)
+    assert model.adaln_t_table.shape == (5, 8)
+
+
+def test_attention16_mlp8_adaln8_pads_and_quantizes_adaln():
+    model_config = tiny_config()
+    model_config.ffn_hidden_size = 64
+    model = MiniMaxH3DiT(model_config, adaln_curve_grid=5, adaln_curve_dim=8)
+    adaln_paths = pad_pruned_adaln_for_int8(model)
+    config = attention16_mlp8_quant_config(model, adaln_paths=adaln_paths)
+    summary = quantize_dit(model, config)
+
+    assert summary["quantized_layers"] == {8: 10}
+    assert model.adaln_t_table.shape == (5, 32)
+    for block in [*model.token_refiner.blocks, *model.blocks]:
+        assert isinstance(block.attn.qkv_proj, nn.Linear)
+        assert isinstance(block.attn.out_proj, nn.Linear)
+        assert isinstance(block.mlp.fc1, nn.QuantizedLinear)
+        assert isinstance(block.mlp.fc2, nn.QuantizedLinear)
+    for block in model.blocks:
+        assert isinstance(block.adaln_proj.linear, nn.QuantizedLinear)
+        assert block.adaln_proj.linear.bits == 8
+        assert block.adaln_proj.linear.group_size == 32
 
 
 def test_attention8_mlp6_keeps_adaln_float():

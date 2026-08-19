@@ -66,3 +66,34 @@ def test_pruned_quant_plan_downloads_shared_bf16_source(profile, tmp_path):
     assert tasks[-2].repo_id == "Comfy-Org/MiniMax-H3"
     assert tasks[-2].destination.name == "minimax_h3_fl2va_pruned_bf16.safetensors"
     assert tasks[-1].repo_id == "pipenetwork/MiniMax-H3-MLX-bf16"
+
+
+def test_attention16_mlp8_plan_downloads_shared_bf16_source(tmp_path):
+    tasks = SETUP.download_plan("attention16-mlp8", tmp_path)
+
+    assert tasks[-2].repo_id == "Comfy-Org/MiniMax-H3"
+    assert tasks[-2].destination.name == "minimax_h3_fl2va_pruned_bf16.safetensors"
+    assert tasks[-1].repo_id == "pipenetwork/MiniMax-H3-MLX-bf16"
+
+
+@pytest.mark.parametrize("profile,bits", [("4-pruned", "4"), ("8-pruned", "8")])
+def test_pruned_quant_build_keeps_rank8_adaln_at_16bit(
+    profile, bits, tmp_path, monkeypatch
+):
+    commands = []
+    monkeypatch.setattr("subprocess.run", lambda command, check: commands.append(command))
+
+    SETUP._build_pruned_quant(profile, tmp_path)
+
+    assert len(commands) == 1
+    assert commands[0][-4:] == ["--bits", bits, "--adaln-bits", "16"]
+
+
+def test_attention16_mlp8_build_uses_validated_adaln16_recipe(tmp_path, monkeypatch):
+    commands = []
+    monkeypatch.setattr("subprocess.run", lambda command, check: commands.append(command))
+
+    SETUP._build_pruned_quant("attention16-mlp8", tmp_path)
+
+    assert len(commands) == 1
+    assert commands[0][-2:] == ["--recipe", "attention16-mlp8-adaln16"]

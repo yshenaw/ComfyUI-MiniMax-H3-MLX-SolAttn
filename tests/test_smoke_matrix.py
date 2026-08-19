@@ -28,7 +28,7 @@ def test_matrix_has_sixteen_unique_cases_per_resolution_and_variant():
 def test_turbo_and_quality_forward_counts_are_explicit():
     cases = MODULE.build_cases()
     assert {(case.sigma_points, case.forwards) for case in cases if "turbo4" in case.name} == {(5, 4)}
-    assert {(case.sigma_points, case.forwards) for case in cases if "turbo6" in case.name} == {(7, 6)}
+    assert {(case.sigma_points, case.forwards) for case in cases if "turbo8" in case.name} == {(9, 8)}
     assert {(case.sigma_points, case.forwards) for case in cases if "quality20" in case.name} == {(21, 20)}
     assert all(case.first_block_cache == "none" for case in cases if case.turbo)
     quality = [case for case in cases if not case.turbo]
